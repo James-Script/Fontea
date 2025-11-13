@@ -5,47 +5,88 @@
 const OPENAI_API_KEY = import.meta.env.VITE_OPENAI_API_KEY || '';
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
 
+// Função para obter o nome do tema formatado
+const getTemaNome = (tema) => {
+  const temas = {
+    defesa_civil: 'Defesa Civil',
+    agricultura: 'Agricultura',
+    monitoramento: 'Monitoramento Costeiro',
+    fiscalizacao: 'Fiscalização Ambiental',
+    relacoes: 'Relações Internacionais'
+  };
+  return temas[tema] || tema;
+};
+
+// Função para obter o nome da prioridade formatado
+const getPrioridadeNome = (prioridade) => {
+  const prioridades = {
+    baixa: 'Baixa',
+    media: 'Média',
+    alta: 'Alta'
+  };
+  return prioridades[prioridade] || prioridade;
+};
+
 export const generateBriefingWithAI = async (specifications) => {
   try {
     if (!OPENAI_API_KEY) {
       throw new Error('API Key da OpenAI não configurada. Configure VITE_OPENAI_API_KEY no arquivo .env');
     }
 
-    const prompt = `Você é um especialista em criação de briefings executivos para governo.
+    const temaNome = getTemaNome(specifications.tema);
+    const prioridadeNome = getPrioridadeNome(specifications.prioridade);
+    const dataAtual = new Date().toLocaleDateString('pt-BR');
 
-Com base nas seguintes especificações, crie um briefing executivo completo e profissional em formato Markdown:
+    const prompt = `Você é um especialista em criação de briefings executivos para governo e órgãos públicos brasileiros.
 
-Título: ${specifications.titulo || 'Briefing Executivo'}
-Tema: ${specifications.tema || 'Geral'}
-Prioridade: ${specifications.prioridade || 'Média'}
-Especificações: ${specifications.especificacoes || 'Nenhuma especificação fornecida'}
+Com base nas seguintes especificações, crie um briefing executivo completo, profissional, formal e com informações concretas em formato Markdown:
 
-O briefing deve incluir:
-1. Um título claro e descritivo
-2. Resumo Executivo (2-3 parágrafos)
-3. Dados Principais (dados relevantes e estatísticas)
-4. Análise Detalhada (análise aprofundada do tema)
-5. Recomendações (recomendações acionáveis)
-6. Conclusão (síntese final)
+**Título:** ${specifications.titulo || 'Briefing Executivo'}
+**Tema:** ${temaNome}
+**Prioridade:** ${prioridadeNome}
+**Especificações do usuário:** ${specifications.especificacoes || 'Nenhuma especificação fornecida'}
 
-Formato: Use Markdown com títulos (#, ##, ###), listas (-), negrito (**texto**), etc.
+**INSTRUÇÕES IMPORTANTES:**
+1. O briefing deve ser FORMAL, PROFISSIONAL e conter INFORMAÇÕES CONCRETAS e DADOS REAIS
+2. Use linguagem técnica apropriada para órgãos governamentais
+3. Inclua estatísticas, dados quantitativos e informações verificáveis quando possível
+4. Seja objetivo e direto
+5. Use formato Markdown com títulos (#, ##, ###), listas (-, *), negrito (**texto**), etc.
 
-Além disso, forneça uma lista de fontes rastreáveis que devem ser citadas no briefing. Cada fonte deve ter:
-- Nome completo da fonte
-- Data de acesso (use a data atual)
-- URL (se aplicável)
+**ESTRUTURA OBRIGATÓRIA DO BRIEFING:**
+1. **Resumo Executivo** (2-3 parágrafos): Síntese do briefing
+2. **Dados Principais** (seção com dados, estatísticas e números relevantes)
+3. **Análise Detalhada** (análise aprofundada do tema com informações técnicas)
+4. **Recomendações** (recomendações acionáveis e específicas)
+5. **Conclusão** (síntese final e próximos passos)
 
-Retorne APENAS um JSON válido no seguinte formato:
+**FONTES E REFERÊNCIAS:**
+Forneça uma lista de fontes oficiais e confiáveis que podem ser usadas para validar as informações:
+- Use fontes governamentais brasileiras (IBGE, INPE, CONAB, INMET, etc.)
+- Use artigos acadêmicos e publicações científicas quando relevante
+- Inclua URLs quando possível
+- Formate cada fonte com nome, descrição e URL (se aplicável)
+
+**FORMATO DE RETORNO:**
+Retorne APENAS um JSON válido no seguinte formato (sem markdown, apenas JSON puro):
 {
-  "conteudo": "conteúdo do briefing em Markdown",
+  "conteudo": "conteúdo completo do briefing em Markdown (incluindo título, seções e formatação)",
   "fontes": [
     {
-      "nome": "Nome da Fonte",
-      "url": "https://exemplo.com",
-      "data_acesso": "06/11/2025"
+      "nome": "Nome da Fonte ou Artigo",
+      "descricao": "Descrição breve da fonte",
+      "url": "https://exemplo.com (se aplicável)",
+      "tipo": "governamental | academico | institucional"
     }
   ]
-}`;
+}
+
+**IMPORTANTE:**
+- Retorne APENAS o JSON, sem texto adicional antes ou depois
+- O conteúdo deve estar em Markdown válido
+- As fontes devem ser reais e verificáveis
+- Use informações concretas e dados específicos
+- Seja preciso e profissional`;
 
     const response = await fetch(OPENAI_API_URL, {
       method: 'POST',
@@ -54,11 +95,11 @@ Retorne APENAS um JSON válido no seguinte formato:
         'Authorization': `Bearer ${OPENAI_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini', // ou 'gpt-3.5-turbo' para economia
+        model: 'gpt-4o-mini',
         messages: [
           {
             role: 'system',
-            content: 'Você é um assistente especializado em criar briefings executivos para órgãos governamentais. Sempre retorne JSON válido.'
+            content: 'Você é um especialista em criação de briefings executivos para governo. Sempre retorne apenas JSON válido, sem texto adicional.'
           },
           {
             role: 'user',
@@ -66,97 +107,200 @@ Retorne APENAS um JSON válido no seguinte formato:
           }
         ],
         temperature: 0.7,
-        max_tokens: 2000
+        max_tokens: 4000
       })
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error?.message || 'Erro ao gerar briefing com IA');
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error?.message || `Erro na API: ${response.status} ${response.statusText}`);
     }
 
     const data = await response.json();
-    const aiResponse = data.choices[0]?.message?.content || '';
+    const assistantMessage = data.choices[0]?.message?.content;
+
+    if (!assistantMessage) {
+      throw new Error('Resposta vazia da API');
+    }
 
     // Tentar extrair JSON da resposta
+    let jsonData;
     try {
-      // Remover markdown code blocks se existirem
-      const jsonMatch = aiResponse.match(/```json\n([\s\S]*?)\n```/) || aiResponse.match(/```\n([\s\S]*?)\n```/);
-      const jsonString = jsonMatch ? jsonMatch[1] : aiResponse;
-      const parsed = JSON.parse(jsonString.trim());
-      
-      return {
-        success: true,
-        conteudo: parsed.conteudo || aiResponse,
-        fontes: parsed.fontes || []
-      };
+      // Remover possíveis markdown code blocks
+      const cleanedMessage = assistantMessage.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      jsonData = JSON.parse(cleanedMessage);
     } catch (parseError) {
-      // Se não conseguir parsear, retorna o conteúdo direto
-      return {
-        success: true,
-        conteudo: aiResponse,
-        fontes: []
+      // Se não conseguir fazer parse, criar estrutura padrão
+      console.warn('Erro ao fazer parse do JSON da IA:', parseError);
+      jsonData = {
+        conteudo: assistantMessage,
+        fontes: [
+          {
+            nome: 'Informações geradas por IA',
+            descricao: 'Conteúdo gerado automaticamente',
+            url: '',
+            tipo: 'institucional'
+          }
+        ]
       };
     }
+
+    return {
+      success: true,
+      conteudo: jsonData.conteudo || assistantMessage,
+      fontes: jsonData.fontes || []
+    };
   } catch (error) {
     console.error('Erro ao gerar briefing com IA:', error);
     return {
       success: false,
-      error: error.message || 'Erro ao gerar briefing com IA. Verifique sua conexão e configuração da API.'
+      error: error.message || 'Erro ao gerar briefing com IA'
     };
   }
 };
 
-// Função mock para desenvolvimento (quando não há API Key)
+// Função para simular geração de briefing (para desenvolvimento sem API key)
 export const generateBriefingMock = async (specifications) => {
-  // Simular delay de API
-  await new Promise(resolve => setTimeout(resolve, 2000));
+  // Simular delay da API
+  await new Promise(resolve => setTimeout(resolve, 1500));
 
-  const mockConteudo = `# ${specifications.titulo || 'Briefing Executivo'}
+  const temaNome = getTemaNome(specifications.tema);
+  const prioridadeNome = getPrioridadeNome(specifications.prioridade);
+  const dataAtual = new Date().toLocaleDateString('pt-BR');
+  const especificacoes = specifications.especificacoes || 'Nenhuma especificação fornecida';
+  
+  // Gerar título baseado nas especificações se não fornecido
+  let titulo = specifications.titulo || 'Briefing Executivo';
+  if (titulo === 'Briefing Executivo' && especificacoes !== 'Nenhuma especificação fornecida') {
+    // Tentar extrair um título das especificações (primeiras palavras)
+    const palavras = especificacoes.split(' ').slice(0, 6).join(' ');
+    titulo = palavras.length > 50 ? palavras.substring(0, 50) + '...' : palavras;
+  }
+
+  // Conteúdo mock mais completo baseado nas especificações
+  const conteudo = `# ${titulo}
 
 ## Resumo Executivo
 
-Este briefing apresenta uma análise detalhada sobre ${specifications.tema || 'o tema especificado'}, com foco em ${specifications.prioridade || 'prioridade média'}.
+Este briefing apresenta uma análise detalhada sobre **${temaNome}**, desenvolvido com base nas especificações: "${especificacoes}".
 
-${specifications.especificacoes ? `\n**Especificações fornecidas:**\n${specifications.especificacoes}\n` : ''}
+A análise foi estruturada considerando aspectos técnicos, dados quantitativos e recomendações acionáveis para tomada de decisão estratégica. O documento segue padrões de comunicação executiva, apresentando informações de forma clara, objetiva e fundamentada.
 
 ## Dados Principais
 
-- Dados relevantes serão apresentados aqui
-- Estatísticas importantes
-- Indicadores-chave
+### Informações Gerais
+- **Período de análise:** ${dataAtual}
+- **Tema:** ${temaNome}
+- **Prioridade:** ${prioridadeNome}
+- **Área de foco:** ${especificacoes.split('.')[0] || temaNome}
+
+### Dados Quantitativos
+- Análise baseada em dados oficiais e fontes confiáveis
+- Consideração de tendências e padrões identificados
+- Avaliação de impactos e implicações
 
 ## Análise Detalhada
 
-Análise aprofundada do tema, considerando as especificações fornecidas.
+### Contexto e Situação Atual
+
+Com base nas especificações fornecidas, identificam-se os seguintes aspectos relevantes:
+
+1. **Contexto:** ${especificacoes.substring(0, 100)}...
+2. **Situação Atual:** Análise em andamento considerando variáveis específicas do tema
+3. **Desafios Identificados:** Requer levantamento de dados complementares
+
+### Aspectos Técnicos
+
+- **Metodologia:** Análise qualitativa e quantitativa
+- **Fontes de Dados:** Instituições oficiais e publicações especializadas
+- **Abordagem:** Análise sistemática e fundamentada
+
+### Impactos e Implicações
+
+- Impactos potenciais identificados conforme especificações
+- Implicações para tomada de decisão
+- Necessidade de monitoramento contínuo
 
 ## Recomendações
 
-1. Recomendação 1
-2. Recomendação 2
-3. Recomendação 3
+1. **Coleta de Dados Complementares**
+   - Realizar levantamento de dados atualizados
+   - Validar informações com fontes oficiais
+   - Consultar especialistas no tema
+
+2. **Análise Aprofundada**
+   - Desenvolver análise mais detalhada considerando as especificações
+   - Identificar tendências e padrões
+   - Avaliar impactos e implicações
+
+3. **Plano de Ação**
+   - Desenvolver plano de ação específico
+   - Estabelecer metas e objetivos
+   - Definir responsabilidades e prazos
+
+4. **Monitoramento Contínuo**
+   - Estabelecer sistema de monitoramento
+   - Definir indicadores de acompanhamento
+   - Realizar avaliações periódicas
 
 ## Conclusão
 
-Síntese final e próximos passos.`;
+Este briefing foi gerado com base nas especificações fornecidas sobre ${temaNome}. Recomenda-se a consulta a fontes oficiais, especialistas no tema e dados atualizados para garantir precisão e relevância das informações apresentadas.
 
-  const mockFontes = [
+As recomendações apresentadas devem ser consideradas no contexto específico da situação analisada, e podem requerer ajustes conforme informações adicionais sejam coletadas.
+
+**Próximos Passos:**
+- Revisar e validar informações apresentadas
+- Complementar com dados específicos quando necessário
+- Aplicar recomendações conforme contexto`;
+
+  // Fontes baseadas no tema
+  const fontesPorTema = {
+    defesa_civil: [
+      { nome: 'CEMADEN - Centro Nacional de Monitoramento e Alertas de Desastres Naturais', descricao: 'Monitoramento de desastres naturais', url: 'https://www.cemaden.gov.br', tipo: 'governamental' },
+      { nome: 'INMET - Instituto Nacional de Meteorologia', descricao: 'Dados meteorológicos e climáticos', url: 'https://www.inmet.gov.br', tipo: 'governamental' },
+      { nome: 'IBGE - Instituto Brasileiro de Geografia e Estatística', descricao: 'Dados estatísticos e geográficos', url: 'https://www.ibge.gov.br', tipo: 'governamental' }
+    ],
+    agricultura: [
+      { nome: 'IBGE - Instituto Brasileiro de Geografia e Estatística', descricao: 'Dados estatísticos agrícolas', url: 'https://www.ibge.gov.br', tipo: 'governamental' },
+      { nome: 'CONAB - Companhia Nacional de Abastecimento', descricao: 'Dados de safra e produção agrícola', url: 'https://www.conab.gov.br', tipo: 'governamental' },
+      { nome: 'EMBRAPA - Empresa Brasileira de Pesquisa Agropecuária', descricao: 'Pesquisas e estudos agrícolas', url: 'https://www.embrapa.br', tipo: 'institucional' }
+    ],
+    monitoramento: [
+      { nome: 'INPE - Instituto Nacional de Pesquisas Espaciais', descricao: 'Dados de satélite e monitoramento', url: 'https://www.inpe.br', tipo: 'governamental' },
+      { nome: 'MMA - Ministério do Meio Ambiente', descricao: 'Políticas e dados ambientais', url: 'https://www.gov.br/mma', tipo: 'governamental' },
+      { nome: 'IBAMA - Instituto Brasileiro do Meio Ambiente', descricao: 'Fiscalização e monitoramento ambiental', url: 'https://www.ibama.gov.br', tipo: 'governamental' }
+    ],
+    fiscalizacao: [
+      { nome: 'IBAMA - Instituto Brasileiro do Meio Ambiente', descricao: 'Fiscalização ambiental', url: 'https://www.ibama.gov.br', tipo: 'governamental' },
+      { nome: 'ICMBio - Instituto Chico Mendes', descricao: 'Conservação da biodiversidade', url: 'https://www.icmbio.gov.br', tipo: 'governamental' },
+      { nome: 'MMA - Ministério do Meio Ambiente', descricao: 'Políticas ambientais', url: 'https://www.gov.br/mma', tipo: 'governamental' }
+    ],
+    relacoes: [
+      { nome: 'MRE - Ministério das Relações Exteriores', descricao: 'Política externa brasileira', url: 'https://www.gov.br/mre', tipo: 'governamental' },
+      { nome: 'IPEA - Instituto de Pesquisa Econômica Aplicada', descricao: 'Pesquisas e estudos econômicos', url: 'https://www.ipea.gov.br', tipo: 'institucional' },
+      { nome: 'IBGE - Instituto Brasileiro de Geografia e Estatística', descricao: 'Dados estatísticos', url: 'https://www.ibge.gov.br', tipo: 'governamental' }
+    ]
+  };
+
+  const fontes = fontesPorTema[specifications.tema] || [
     {
       nome: 'IBGE - Instituto Brasileiro de Geografia e Estatística',
+      descricao: 'Dados estatísticos e informações geográficas',
       url: 'https://www.ibge.gov.br',
-      data_acesso: new Date().toLocaleDateString('pt-BR')
+      tipo: 'governamental'
     },
     {
       nome: 'INPE - Instituto Nacional de Pesquisas Espaciais',
+      descricao: 'Dados de satélite e monitoramento ambiental',
       url: 'https://www.inpe.br',
-      data_acesso: new Date().toLocaleDateString('pt-BR')
+      tipo: 'governamental'
     }
   ];
 
   return {
     success: true,
-    conteudo: mockConteudo,
-    fontes: mockFontes
+    conteudo,
+    fontes
   };
 };
-

@@ -4,7 +4,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { getDatabase, saveDatabase } from '../data/database'
 import { getCurrentUser } from '../utils/auth'
 import { toast } from 'sonner'
-import { Save, ArrowLeft } from 'lucide-react'
+import { Save, ArrowLeft, Sparkles, Loader2 } from 'lucide-react'
+import { generateBriefingWithAI, generateBriefingMock } from '../services/aiService'
 
 export default function NewBriefing() {
   const navigate = useNavigate()
@@ -19,6 +20,9 @@ export default function NewBriefing() {
     fontes: []
   })
   const [fonteInput, setFonteInput] = useState('')
+  const [especificacoes, setEspecificacoes] = useState('')
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [useAI, setUseAI] = useState(false)
 
   const createMutation = useMutation({
     mutationFn: async (data) => {
@@ -74,6 +78,75 @@ export default function NewBriefing() {
     })
   }
 
+  const handleGenerateWithAI = async () => {
+    if (!especificacoes.trim()) {
+      toast.error('Por favor, descreva o que você deseja no briefing')
+      return
+    }
+
+    setIsGenerating(true)
+    toast.info('Gerando briefing com IA... Isso pode levar alguns segundos.')
+
+    try {
+      const apiKey = import.meta.env.VITE_OPENAI_API_KEY
+      const result = apiKey 
+        ? await generateBriefingWithAI({
+            titulo: formData.titulo || 'Briefing Executivo',
+            tema: formData.tema,
+            prioridade: formData.prioridade,
+            especificacoes: especificacoes
+          })
+        : await generateBriefingMock({
+            titulo: formData.titulo || 'Briefing Executivo',
+            tema: formData.tema,
+            prioridade: formData.prioridade,
+            especificacoes: especificacoes
+          })
+
+      if (result.success) {
+        // Processar fontes (pode ser array de objetos ou array de strings)
+        const fontesProcessadas = result.fontes?.map(f => {
+          if (typeof f === 'string') {
+            return f
+          }
+          return f.nome || f
+        }) || []
+
+        // Extrair título do conteúdo gerado se não foi fornecido
+        const conteudoGerado = result.conteudo || ''
+        let tituloGerado = formData.titulo
+        
+        if (!formData.titulo.trim() && conteudoGerado) {
+          // Tentar extrair título do markdown (primeira linha após #)
+          const tituloMatch = conteudoGerado.match(/^#\s+(.+)$/m)
+          if (tituloMatch) {
+            tituloGerado = tituloMatch[1].trim()
+          }
+        }
+
+        setFormData({
+          ...formData,
+          titulo: tituloGerado || formData.titulo,
+          conteudo: conteudoGerado,
+          fontes: [...new Set([...formData.fontes, ...fontesProcessadas])] // Evitar duplicatas
+        })
+        toast.success('Briefing gerado com sucesso! Revise o conteúdo e as fontes antes de salvar.')
+        
+        // Mostrar informações sobre as fontes geradas
+        if (fontesProcessadas.length > 0) {
+          toast.info(`${fontesProcessadas.length} fonte(s) adicionada(s) automaticamente`)
+        }
+      } else {
+        toast.error(result.error || 'Erro ao gerar briefing com IA')
+      }
+    } catch (error) {
+      console.error('Erro ao gerar briefing:', error)
+      toast.error('Erro ao gerar briefing com IA: ' + (error.message || 'Tente novamente.'))
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -90,11 +163,52 @@ export default function NewBriefing() {
       <div>
         <h1 className="text-3xl font-bold text-gray-900">Novo Briefing</h1>
         <p className="mt-2 text-gray-600">
-          Crie um novo briefing executivo
+          Crie um novo briefing executivo. Use a IA para gerar o conteúdo automaticamente.
         </p>
       </div>
 
       <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow p-6 space-y-6">
+        {/* Seção de IA */}
+        <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-6 space-y-4">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-5 w-5 text-blue-600" />
+            <h2 className="text-lg font-semibold text-blue-900">Assistente de IA</h2>
+          </div>
+          <p className="text-sm text-blue-700">
+            Descreva o que você deseja no briefing e a IA irá gerar o conteúdo completo com informações concretas, formais e referências de artigos.
+          </p>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Especificações do Briefing
+            </label>
+            <textarea
+              value={especificacoes}
+              onChange={(e) => setEspecificacoes(e.target.value)}
+              rows={4}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="Ex: Análise da produção agrícola de Pernambuco em 2024, incluindo dados de crescimento, principais culturas, impactos climáticos e projeções para 2025..."
+            />
+          </div>
+          <button
+            type="button"
+            onClick={handleGenerateWithAI}
+            disabled={isGenerating || !especificacoes.trim()}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:bg-gray-400 disabled:cursor-not-allowed"
+          >
+            {isGenerating ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Gerando...
+              </>
+            ) : (
+              <>
+                <Sparkles className="h-4 w-4" />
+                Gerar Briefing com IA
+              </>
+            )}
+          </button>
+        </div>
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
             Título *

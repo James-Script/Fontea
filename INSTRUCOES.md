@@ -135,6 +135,83 @@ Consulte o arquivo **`CREDENCIAIS_ADMIN.md`** para informações detalhadas sobr
 - Permissões por nível
 - Boas práticas de segurança
 
+## 🤖 Assistente de IA para Briefings
+
+### Configuração da IA
+
+O sistema inclui um assistente de IA para ajudar na criação de briefings. Para usar essa funcionalidade:
+
+1. **Obtenha uma API Key da OpenAI:**
+   - Acesse: https://platform.openai.com/api-keys
+   - Crie uma conta ou faça login
+   - Gere uma nova API Key
+
+2. **Configure a API Key no arquivo `.env`:**
+   ```env
+   VITE_OPENAI_API_KEY=sua-chave-openai-aqui
+   ```
+
+3. **Reinicie o servidor:**
+   ```powershell
+   npm run dev
+   ```
+
+### Como Usar o Assistente de IA
+
+1. **Acesse a página de criação de briefing:**
+   - Faça login no sistema
+   - Clique em **Briefings** no menu lateral
+   - Clique em **Novo Briefing**
+
+2. **Preencha as informações básicas:**
+   - **Título:** Informe o título do briefing
+   - **Tema:** Selecione o tema (Defesa Civil, Agricultura, etc.)
+   - **Prioridade:** Selecione a prioridade (Baixa, Média, Alta)
+
+3. **Use o Assistente de IA:**
+   - Na seção azul "Assistente de IA", descreva o que você deseja no briefing
+   - Exemplo: "Análise da produção agrícola de Pernambuco em 2024, incluindo dados de crescimento, principais culturas, impactos climáticos e projeções para 2025"
+   - Clique em **Gerar Briefing com IA**
+
+4. **Revise o conteúdo gerado:**
+   - A IA irá gerar o conteúdo completo do briefing em Markdown
+   - As fontes serão adicionadas automaticamente
+   - Revise o conteúdo antes de salvar
+
+### Modo de Desenvolvimento
+
+Se você não configurar a API Key da OpenAI, o sistema usará um modo de desenvolvimento que:
+- Gera um briefing básico com estrutura padrão
+- Adiciona fontes de exemplo (IBGE, INPE)
+- Não usa a IA real
+
+**⚠️ Nota:** O modo de desenvolvimento é apenas para testes. Para usar a IA real, configure a API Key.
+
+### O que a IA faz:
+
+1. **Gera conteúdo completo:**
+   - Resumo Executivo
+   - Dados Principais
+   - Análise Detalhada
+   - Recomendações
+   - Conclusão
+
+2. **Adiciona fontes automaticamente:**
+   - Fontes governamentais (IBGE, INPE, CONAB, etc.)
+   - Artigos acadêmicos quando relevante
+   - URLs e referências verificáveis
+
+3. **Formata em Markdown:**
+   - Títulos, listas, negrito, etc.
+   - Pronto para ser usado no sistema
+
+### Custos da API
+
+- A OpenAI cobra por uso da API
+- O modelo usado é o `gpt-4o-mini` (mais econômico)
+- Você pode configurar limites de uso na sua conta OpenAI
+- Consulte os preços em: https://openai.com/pricing
+
 ## Solução de Problemas
 
 ### Erro: "npm não é reconhecido"
