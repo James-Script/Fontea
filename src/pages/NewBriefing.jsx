@@ -162,11 +162,14 @@ export default function NewBriefing() {
           }
         }
 
+        // Usar tema detectado pela IA se disponível (pode ser qualquer tema, não só os 5)
+        const temaFinal = result?.detected_tema || deteccao.tema || 'nao_definido';
+        
         setFormData({
           ...formData,
           titulo: tituloGerado || formData.titulo,
           conteudo: conteudoGerado,
-          tema: deteccao.tema,
+          tema: temaFinal, // Usar tema identificado pela IA
           status: 'em_revisao',
           fontes: [...new Set([...formData.fontes, ...fontesProcessadas])]
         })

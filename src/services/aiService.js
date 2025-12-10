@@ -4,6 +4,7 @@
 
 import { enrichPromptWithData, getAcademicSources, getThematicData } from './researchService'
 import { detectTheme as detectThemeLocal } from './themeDetectionService'
+import { fetchGovernmentData } from './governmentApiService'
 import { createLogger } from '../utils/logger'
 
 const logger = createLogger('AIService')
@@ -12,16 +13,59 @@ const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
 
 // Função para obter o nome do tema formatado
 const getTemaNome = (tema) => {
-  const temas = {
+  if (!tema) return 'Tema a Ser Identificado';
+  if (tema === 'nao_definido') return 'Tema Não Detectado';
+  
+  // Importar getThemeName do themeDetectionService para manter consistência
+  // Por enquanto, usar fallback básico - o themeDetectionService já tem a lógica completa
+  const temasConhecidos = {
     defesa_civil: 'Defesa Civil',
     agricultura: 'Agricultura',
     monitoramento: 'Monitoramento Costeiro',
     fiscalizacao: 'Fiscalização Ambiental',
-    relacoes: 'Relações Internacionais'
+    relacoes: 'Relações Internacionais',
+    seguranca_publica: 'Segurança Pública',
+    infraestrutura: 'Infraestrutura',
+    saude: 'Saúde',
+    educacao: 'Educação',
+    habitacao: 'Habitação',
+    assistencia_social: 'Assistência Social',
+    trabalho_emprego: 'Trabalho e Emprego',
+    economia_financeiro: 'Economia e Finanças',
+    energia: 'Energia',
+    comunicacao_midia: 'Comunicação e Mídia',
+    tecnologia_inovacao: 'Tecnologia e Inovação',
+    turismo: 'Turismo',
+    esporte_lazer: 'Esporte e Lazer',
+    cultura: 'Cultura',
+    desenvolvimento_social: 'Desenvolvimento Social',
+    cidades_urbanismo: 'Cidades e Urbanismo',
+    saneamento: 'Saneamento',
+    transporte_mobilidade: 'Transporte e Mobilidade',
+    meio_ambiente_clima: 'Meio Ambiente e Clima',
+    recursos_hidricos: 'Recursos Hídricos',
+    mineracao: 'Mineração',
+    desenvolvimento_regional: 'Desenvolvimento Regional',
+    ciencia_pesquisa: 'Ciência e Pesquisa',
+    populacao_indigena: 'População Indígena',
+    igualdade_genero: 'Igualdade de Gênero',
+    racismo_igualdade_racial: 'Igualdade Racial',
+    direito_humanos: 'Direitos Humanos',
+    planejamento_gestao: 'Planejamento e Gestão',
+    transparencia_controle: 'Transparência e Controle',
+    trabalho_infantil: 'Trabalho Infantil',
+    terceira_idade: 'Terceira Idade',
+    pessoas_deficiencia: 'Pessoas com Deficiência'
   };
-  if (!tema) return 'Geral';
-  if (tema === 'nao_definido') return 'Tema Não Detectado';
-  return temas[tema] || tema;
+  
+  // Se está nos temas conhecidos, retornar
+  if (temasConhecidos[tema]) return temasConhecidos[tema];
+  
+  // Se não está, formatar de snake_case para título formatado
+  return tema
+    .split('_')
+    .map(palavra => palavra.charAt(0).toUpperCase() + palavra.slice(1))
+    .join(' ');
 };
 
 // Função para obter o nome da prioridade formatado
@@ -48,46 +92,348 @@ export const generateBriefingWithAI = async (specifications) => {
     }
 
     logger.debug('Enriquecendo prompt com dados acadêmicos');
-    const temaNome = getTemaNome(specifications.tema);
+    
+    // Usar tema fornecido ou deixar que a IA detecte
+    // NÃO forçar tema se não faz sentido
+    let temaParaUsar = specifications.tema;
+    if (!temaParaUsar || temaParaUsar === 'nao_definido') {
+      // Deixar a IA detectar
+      temaParaUsar = null;
+    }
+    
+    const temaNome = temaParaUsar ? getTemaNome(temaParaUsar) : 'Tema a Ser Identificado';
     const prioridadeNome = getPrioridadeNome(specifications.prioridade);
     const dataAtual = new Date().toLocaleDateString('pt-BR');
 
-    // Enriquecer prompt com dados reais e fontes acadêmicas
-    const dadosEnriquecidos = enrichPromptWithData(specifications.tema, specifications.especificacoes);
-    const thematicData = getThematicData(specifications.tema);
-    const academicSources = getAcademicSources(specifications.tema);
+    // Buscar dados governamentais reais das APIs (só se tiver tema válido)
+    let governmentData = { fontes: [], dados: [] };
+    let dadosEnriquecidos = '';
+    let thematicData = { dados: [] };
+    let academicSources = { institucional: [], academico: [] };
+    
+    if (temaParaUsar && temaParaUsar !== 'nao_definido') {
+      logger.info('Buscando dados de APIs governamentais', { tema: temaParaUsar });
+      governmentData = await fetchGovernmentData(temaParaUsar, specifications.especificacoes || '');
+      dadosEnriquecidos = enrichPromptWithData(temaParaUsar, specifications.especificacoes);
+      thematicData = getThematicData(temaParaUsar);
+      academicSources = getAcademicSources(temaParaUsar);
+    } else {
+      // Se não tem tema, buscar dados genéricos baseados nas especificações
+      logger.info('Tema não definido, buscando dados baseados nas especificações');
+      // Tentar buscar dados baseados nas especificações diretamente
+      const temaDetectadoLocal = detectThemeLocal(specifications.especificacoes || '');
+      if (temaDetectadoLocal?.tema) {
+        governmentData = await fetchGovernmentData(temaDetectadoLocal.tema, specifications.especificacoes || '');
+        dadosEnriquecidos = enrichPromptWithData(temaDetectadoLocal.tema, specifications.especificacoes);
+        thematicData = getThematicData(temaDetectadoLocal.tema);
+        academicSources = getAcademicSources(temaDetectadoLocal.tema);
+      }
+    }
+    
+    // Adicionar dados governamentais às fontes
+    const fontesCombinadas = [
+      ...academicSources.institucional,
+      ...academicSources.academico,
+      ...(governmentData.fontes || [])
+    ];
 
-    logger.debug('Dados acadêmicos enriquecidos', { 
-      fontes: academicSources.institucional.length + academicSources.academico.length,
-      metricas: thematicData.dados.length
+    // Criar texto com dados governamentais obtidos
+    let dadosGovernamentaisTexto = '';
+    if (governmentData.dados && governmentData.dados.length > 0) {
+      dadosGovernamentaisTexto = `
+## Dados Governamentais em Tempo Real (APIs Oficiais):
+
+${governmentData.dados.map(d => `- **${d.titulo}** (Fonte: ${d.fonte}): ${d.conteudo}
+  - URL: ${d.url}`).join('\n\n')}
+
+⚠️ **IMPORTANTE**: Use estes dados reais nas suas análises. Consulte as URLs fornecidas para informações atualizadas e verificáveis.
+`;
+    }
+
+    logger.debug('Dados acadêmicos e governamentais enriquecidos', { 
+      fontes: fontesCombinadas.length,
+      metricas: thematicData.dados.length,
+      dadosGovernamentais: governmentData.dados?.length || 0
     });
 
-    const prompt = `Você é um especialista sênior em análise estratégica, políticas públicas brasileiras e elaboração de briefings executivos para órgãos governamentais federais e estaduais. Sua experiência inclui comunicação técnica, análise fundamentada em evidências e produção de documentos de alto padrão profissional adaptados ao contexto brasileiro.
+    const prompt = `# =====================================================================
 
-**CONTEXTO CRÍTICO:**
-Este briefing deve ser:
-- **ESPECÍFICO DO CONTEXTO BRASILEIRO:** Refletir legislação brasileira, diretrizes do governo federal, organismos como CONAB, MAPA, IBAMA, INPE, SINPDEC (Sistema Nacional de Proteção e Defesa Civil);
-- **PROFUNDAMENTE FUNDAMENTADO:** Todos os dados e afirmações DEVEM SER VERIFICÁVEIS ou CLARAMENTE INDICADOS COMO ESTIMATIVAS/PROJEÇÕES;
-- **EVITAR DADOS FICTÍCIOS:** Não inventar números. Se não tiver dado exato, indicar intervalo provável, fonte de onde veio a estimativa, ou descrever qualitativamente;
-- **COERÊNCIA TEMÁTICA ABSOLUTA:** O briefing deve tratar exclusivamente do tema detectado, mantendo foco consistente;
-- **CONTEXTO REGIONAL BRASILEIRO:** Considerar particularidades regionais (Norte, Nordeste, Centro-Oeste, Sudeste, Sul), diretrizes de descentralização, competências federais/estaduais/municipais.
+# SISTEMA DE GERADOR DE BRIEFINGS GOVERNAMENTAIS – MODO EXECUTIVO ESTADUAL
+
+# Secretaria de Assessoria Especial à Governadora
+
+# (Assuntos Especiais e Relações Internacionais)
+
+# =====================================================================
+
+
+
+Você é um Analista Governamental Sênior, especializado em redigir briefings técnicos, estratégicos e institucionais para a Governadora e para os órgãos de alto nível do Poder Executivo Estadual.
+
+
+
+Seu papel é produzir BRIEFINGS COMPLETOS, PRAGMÁTICOS, OBJETIVOS e 100% CONTEXTUALIZADOS ao pedido do usuário.
+
+
+
+A estrutura abaixo é OBRIGATÓRIA.  
+
+O briefing deve sempre ser formulado para auxiliar decisões de alto impacto.
+
+
+
+================================================================================
+
+1. IDENTIFICAÇÃO E CONTEXTO DO PEDIDO
+
+================================================================================
+
+Antes de iniciar o documento, identifique:
+
+- Tema e escopo exato solicitados pelo usuário  
+
+- Localidade (estado, município, região, comunidades, zonas administrativas)  
+
+- Populações envolvidas  
+
+- Tempo (data, período, vigência, situação atual)  
+
+- Relevância governamental  
+
+- Potenciais impactos políticos, sociais, econômicos ou internacionais  
+
+
+
+NUNCA altere o tema.  
+
+NUNCA gere conteúdo genérico.
 
 **ESPECIFICAÇÕES DO BRIEFING:**
-- Título Proposto: ${specifications.titulo || 'Briefing Executivo'}
-- Tema: ${temaNome}
+- Solicitação do Usuário: "${specifications.especificacoes || 'Nenhuma especificação fornecida'}"
+- Tema Identificado: ${temaNome}
 - Prioridade: ${prioridadeNome}
 - Data de Elaboração: ${dataAtual}
-- Descrição/Especificações: ${specifications.especificacoes || 'Nenhuma especificação fornecida'}
+
+================================================================================
+
+2. ESTRUTURA OBRIGATÓRIA DO BRIEFING GOVERNAMENTAL
+
+================================================================================
+
+
+
+Todo briefing deve seguir EXACTAMENTE esta estrutura:
+
+
+
+1. Título Institucional  
+
+2. Objetivo do Documento  
+
+3. Sumário Executivo  
+
+4. Contexto e Diagnóstico Geral  
+
+5. Situação Atual (com dados, estatísticas, indicadores e regiões afetadas)
+
+6. Públicos Envolvidos:
+
+      - População mais afetada  
+
+      - População menos afetada  
+
+      - Setores estratégicos impactados  
+
+      - Grupos vulneráveis  
+
+7. Atores Institucionais:
+
+      - Órgãos estaduais envolvidos  
+
+      - Órgãos municipais  
+
+      - Órgãos federais (quando aplicável)  
+
+      - Organismos internacionais relevantes  
+
+8. Análise Técnica e Estratégica:
+
+      - Riscos imediatos  
+
+      - Riscos potenciais  
+
+      - Vulnerabilidades  
+
+      - Oportunidades  
+
+9. Recomendações:
+
+      - Ações urgentes (0–24h)  
+
+      - Ações de curto prazo (48h – 7 dias)  
+
+      - Ações de médio prazo (8–60 dias)  
+
+      - Ações de longo prazo (60+ dias)  
+
+10. Impactos Esperados:
+
+      - Impacto social  
+
+      - Impacto econômico  
+
+      - Impacto institucional  
+
+      - Impacto operacional  
+
+11. Indicadores de Monitoramento:
+
+      - Metas  
+
+      - KPIs  
+
+      - Indicadores de risco  
+
+12. Anexo:
+
+      - Tabelas de dados  
+
+      - Fontes técnicas  
+
+      - Escopo para PDF (se solicitado)
+
+
+
+================================================================================
+
+3. REDAÇÃO GOVERNAMENTAL – PADRÕES OBRIGATÓRIOS
+
+================================================================================
+
+- Linguagem institucional, diplomática e técnica.  
+
+- Tom profissional, objetivo e direto.  
+
+- Termos adequados ao Poder Executivo Estadual.  
+
+- Evite especulação.  
+
+- Utilize dados plausíveis e contextualizados.  
+
+- Sempre apresente:
+
+    * onde,  
+
+    * quem,  
+
+    * quanto,  
+
+    * por que,  
+
+    * e quais riscos.  
+
+- Priorize clareza para tomada de decisão da Governadora.
+
+
+
+================================================================================
+
+4. FOCOS DESTA SECRETARIA (APLICAR SEMPRE QUE FOR PERTINENTE)
+
+================================================================================
+
+Como órgão de Assuntos Especiais e Relações Internacionais, considere em suas análises:
+
+
+
+- Riscos à imagem institucional do Governo  
+
+- Impactos regionais, interestaduais ou internacionais  
+
+- Possibilidades de cooperação com:
+
+      • ONU  
+
+      • OEA  
+
+      • Banco Mundial  
+
+      • BID  
+
+      • Consulados e embaixadas  
+
+- Interface com políticas públicas estaduais  
+
+- Articulação intergovernamental (união, estado, municípios)
+
+
+
+================================================================================
+
+5. MODO DE DECISÃO ESTRATÉGICA
+
+================================================================================
+
+O briefing deve permitir que a governadora entenda rapidamente:
+
+- A gravidade da situação  
+
+- Onde agir  
+
+- Quem acionar  
+
+- Quais recursos priorizar  
+
+- Quais riscos políticos e institucionais estão presentes  
+
+
+
+================================================================================
+
+6. ITENS PROIBIDOS
+
+================================================================================
+
+❌ Textos genéricos  
+
+❌ Respostas que não correspondem ao tema  
+
+❌ Foco técnico sem contexto governamental  
+
+❌ Omissão de dados relevantes  
+
+❌ Substituir assunto solicitado por temas aleatórios  
+
+❌ Falta de atores envolvidos  
+
+❌ Ausência de públicos afetados  
+
+
+
+================================================================================
+
+7. OBJETIVO FINAL
+
+================================================================================
+
+Gerar BRIEFINGS GOVERNAMENTAIS de alta precisão, profundidade e relevância executiva, capazes de orientar imediatamente decisões da Governadora, seus assessores diretos e órgãos estratégicos.
+
+
+
+Sempre entregue o melhor documento possível.
 
 ${dadosEnriquecidos}
 
-**INSTRUÇÕES CRÍTICAS:**
+**REQUISITOS ADICIONAIS CRÍTICOS:**
 
-1. **TEMA E COERÊNCIA:**
-   - O briefing trata EXCLUSIVAMENTE de: **${temaNome}**
-   - NENHUMA mistura de temas não relacionados
-   - Se há intersecções (ex: impacto de desastres naturais em agricultura), deixar ABSOLUTAMENTE CLARO e justificado
-   - Manter foco temático em TODAS as seções
+1. **CONTEXTO BRASILEIRO ESPECÍFICO:**
+   - Refletir legislação brasileira, diretrizes do governo federal, organismos como CONAB, MAPA, IBAMA, INPE, SINPDEC (Sistema Nacional de Proteção e Defesa Civil);
+   - Referenciar MARCOS BRASILEIROS relevantes: Lei de Proteção de Dados, Plano Plurianual (PPA), diretrizes do governo federal
+   - Para Defesa Civil: mencionar SINPDEC, CENAD, estrutura de Defesa Civil em estados e municípios
+   - Para Agricultura: mencionar Zoneamento Agrícola de Risco (ZAR), Programa de Crédito Rural (PRONAF, Banco do Brasil), CONAB
+   - Para Meio Ambiente: mencionar IBAMA, licenciamento ambiental, legislação de proteção ambiental brasileira
+   - Considerar REGIONALIZAÇÕES: Caatinga, Cerrado, Amazônia, Mata Atlântica, Pantanal conforme relevante
+   - Reconhecer competências: federal (MAPA, IBAMA, INPE), estadual (Secretarias), municipal (Prefeituras)
 
 2. **DADOS E VERIFICABILIDADE:**
    - NUNCA inventar números ou estatísticas
@@ -97,88 +443,33 @@ ${dadosEnriquecidos}
    - Quando dados exatos não estão disponíveis: DESCREVER QUALITATIVAMENTE com base em literatura técnica
    - Se precisar de número: usar intervalos (ex: "estima-se entre 1,5 e 2,0 milhões") em vez de número fictício
 
-3. **CONTEXTO BRASILEIRO ESPECÍFICO:**
-   - Referenciar MARCOS BRASILEIROS relevantes: Lei de Proteção de Dados, Plano Plurianual (PPA), diretrizes do governo federal
-   - Para Defesa Civil: mencionar SINPDEC, CENAD, estrutura de Defesa Civil em estados e municípios
-   - Para Agricultura: mencionar Zoneamento Agrícola de Risco (ZAR), Programa de Crédito Rural (PRONAF, Banco do Brasil), CONAB
-   - Para Meio Ambiente: mencionar IBAMA, licenciamento ambiental, legislação de proteção ambiental brasileira
-   - Considerar REGIONALIZAÇÕES: Caatinga, Cerrado, Amazônia, Mata Atlântica, Pantanal conforme relevante
-   - Reconhecer competências: federal (MAPA, IBAMA, INPE), estadual (Secretarias), municipal (Prefeituras)
-
-4. **INSTITUIÇÕES CORRETAS:**
-   - PROTECÇÃO CIVIL de Portugal: NÃO relevante para briefing brasileiro
-   - Usar CENAD (Centro Nacional de Monitoramento e Alertas de Desastres Naturais) para defesa civil
-   - Usar CONAB (Companhia Nacional de Abastecimento) e MAPA (Ministério da Agricultura) para agricultura
-   - Usar INPE (Instituto Nacional de Pesquisas Espaciais) para monitoramento climático
-   - Usar EMBRAPA para pesquisa agrícola
-   - Usar IBAMA para questões ambientais
-
-5. **LINGUAGEM TÉCNICA BRASILEIRA:**
-   - Usar termos apropriados: "Desastres naturais", "Proteção e Defesa Civil", "Produção agrícola", "Segurança alimentar", "Zoneamento agrícola"
-   - Evitar genéricos: não usar "stakeholders" indefinidos—nomear instituições brasileiras reais
-   - Usar siglas brasileiras corretas: SINPDEC, CENAD, CONAB, MAPA, EMBRAPA, IBGE, INPE
-
-6. **ESTRUTURA E PROFUNDIDADE:**
-   - Tamanho MÍNIMO: 1800-2200 palavras
-   - 6 seções fundamentais com desenvolvimento profissional
-   - Cada seção com densidade informativa alta
+3. **PROFUNDIDADE E COMPLETUDE:**
+   - Tamanho MÍNIMO: 3000-4000 palavras (não menos)
+   - Todas as 12 seções obrigatórias com desenvolvimento COMPLETO e PROFUNDO
+   - Cada seção com densidade informativa ALTA
    - Análise multidimensional (institucional, técnica, operacional, social, ambiental conforme tema)
+   - NÃO CORTE INFORMAÇÕES - complete todas as frases e seções
+   - Seja ESPECÍFICO ao que o usuário pediu nas especificações: "${specifications.especificacoes || ''}"
 
-**ESTRUTURA OBRIGATÓRIA (6 SEÇÕES):**
-
-# [TÍTULO ESPECÍFICO E DESCRITIVO - ${temaNome}]
-
-## Resumo Executivo
-- Síntese formal da situação atual de ${temaNome}
-- Principais achados com dados verificáveis (com fontes brasileiras)
-- Contexto de importância estratégica para o Brasil
-- Recomendações prioritárias resumidas
-- 3-4 parágrafos densos e substanciais
-
-## Situação Atual no Brasil
-- Contexto histórico e regulatório brasileiro
-- Situação presente de ${temaNome} no Brasil (dados verificáveis)
-- Marcos legais, diretrizes federais, políticas públicas relevantes
-- Competências institucionais (federal/estadual/municipal)
-- Atores e stakeholders BRASILEIROS (instituições nomeadas e reais)
-- DESENVOLVIMENTO: 5-6 parágrafos bem estruturados
-
-## Dados, Indicadores e Estatísticas
-- Tabela Markdown com indicadores brasileiros VERIFICÁVEIS
-- Cada dado com fonte brasileira (IBGE, CONAB, INPE, etc.)
-- Comparações entre regiões brasileiras quando relevante
-- Tendências temporais baseadas em histórico disponível
-- Interpretação clara dos dados apresentados
-- DESENVOLVIMENTO: 4-5 parágrafos + tabela(s)
-
-## Análise Estratégica
-- Análise técnica profunda de ${temaNome} no contexto brasileiro
-- Desafios reais com fundamentação em dados e legislação
-- Oportunidades identificadas com viabilidade técnica e institucional
-- Impactos em dimensões relevantes (econômica, social, ambiental, operacional)
-- Considerações regionais (variações Norte-Nordeste-Centro-Sul)
-- DESENVOLVIMENTO: 6-8 parágrafos
-
-## Recomendações Estratégicas
-- 4-5 recomendações prioritárias, específicas de ${temaNome}
-- Cada recomendação com: objetivo claro, justificativa, ações concretas, cronograma, indicadores
-- Recomendações viáveis e alinhadas com legislação/políticas brasileiras
-- Atores responsáveis claramente identificados (ministérios, secretarias, órgãos)
-- DESENVOLVIMENTO: Recomendações estruturadas com profundidade
-
-## Referências Brasileiras
-- Lista de fontes VERIFICÁVEIS e BRASILEIRAS
-- Instituições, publicações, documentos oficiais
-- URLs e datas de acesso/publicação
-- Tipos de fonte: governamental federal, estadual, municipal, acadêmica, institucional
+4. **INSTRUÇÕES PARA O TÍTULO:**
+   - O título DEVE ser formal, descritivo e específico, baseado EXATAMENTE no que o usuário solicitou nas especificações
+   - NÃO use títulos genéricos como "Briefing Executivo" ou apenas o nome do tema
+   - Se o usuário pediu "situação dos solos agrícolas da região rural de Pernambuco", o título deve ser algo como: "Situação dos Solos Agrícolas na Região Rural de Pernambuco: Análise Técnica e Estratégica"
+   - O título deve refletir o escopo específico e a localização/contexto mencionado nas especificações
+   - Use linguagem formal e técnica apropriada para documentos governamentais
 
 **DADOS PARA ENRIQUECIMENTO:**
 ${dadosEnriquecidos}
 
+${dadosGovernamentaisTexto}
+
+**FONTES GOVERNAMENTAIS DISPONÍVEIS:**
+${fontesCombinadas.map(f => `- **${f.nome}**: ${f.descricao || ''} ${f.url ? `(${f.url})` : ''}`).join('\n')}
+
 **FORMATO DE RETORNO JSON:**
 {
-  "titulo": "Título específico de ${temaNome} no Brasil",
-  "conteudo": "Conteúdo PROFISSIONAL e BRASILEIRO em Markdown (1800-2200 palavras, 6 seções, dados VERIFICÁVEIS com fontes brasileiras, análise profunda, zero vagueza, contexto brasileiro específico)",
+  "titulo": "[TÍTULO INSTITUCIONAL FORMAL E ESPECÍFICO BASEADO NAS ESPECIFICAÇÕES - NÃO GENÉRICO]",
+  "conteudo": "Conteúdo PROFISSIONAL, ESPECÍFICO e BRASILEIRO em Markdown seguindo EXATAMENTE a estrutura obrigatória de 12 seções. MÍNIMO de 3000-4000 palavras. Todas as seções completas e desenvolvidas. Dados VERIFICÁVEIS com fontes brasileiras explícitas. Análise profunda. ZERO vagueza. Contexto específico baseado nas especificações do usuário: '${specifications.especificacoes || ''}'. NÃO CORTE INFORMAÇÕES - complete todas as frases e seções.",
   "fontes": [
     {
       "nome": "Instituição/Publicação Brasileira",
@@ -186,27 +477,107 @@ ${dadosEnriquecidos}
       "url": "https://url-brasileira.gov.br ou acadêmica",
       "tipo": "governamental | academico | institucional"
     }
-  ]
+  ],
+  "detected_tema": "[IDENTIFICAR O TEMA CORRETO baseado no pedido do usuário - pode ser qualquer tema que faça sentido]",
+  "detected_confianca": 85,
+  "detected_palavras": ["palavra1", "palavra2"]
 }
 
+⚠️ **REGRA CRÍTICA - ESPECIFICIDADE:**
+- NUNCA gere conteúdo genérico sobre um tema amplo
+- SEMPRE responda DIRETAMENTE ao que o usuário pediu: "${specifications.especificacoes || ''}"
+- Identifique: O que o usuário quer saber? O que precisa ser feito? Qual a situação específica?
+- Cada seção deve abordar a SITUAÇÃO ESPECÍFICA solicitada, não um tema genérico
+- Se o pedido é sobre "X em Y", o briefing é sobre "X em Y", não sobre "X em geral"
+- DESENVOLVA COMPLETAMENTE cada seção - não deixe frases pela metade
+- Use MÍNIMO 3000 palavras - conteúdo substancial e completo
+- Foque em: ANÁLISE ESPECÍFICA + O QUE FAZER + COMO FAZER + QUEM FAZ + QUANDO FAZER
+
 **REQUISITOS NÃO-NEGOCIÁVEIS:**
-- ✅ TEMA COERENTE: Briefing sobre ${temaNome} exclusivamente, sem mistura confusa
+- ✅ TEMA COERENTE: Identifique e use o tema CORRETO que faz sentido com o pedido do usuário. Você PODE criar QUALQUER tema que faça sentido, não se limite a uma lista restrita.
 - ✅ DADOS VERIFICÁVEIS: Todos os números com fonte brasileira ou CLARAMENTE INDICADOS como estimativa
 - ✅ CONTEXTO BRASILEIRO: Instituições, legislação, políticas públicas brasileiras reais
 - ✅ ZERO INSTITUIÇÕES INVÁLIDAS: Nenhuma referência a órgãos estrangeiros não pertinentes
 - ✅ LINGUAGEM TÉCNICA: Formal, apropriada para governo federal/estadual
 - ✅ ANÁLISE PROFUNDA: Explicação de relações, causas, impactos
 - ✅ RECOMENDAÇÕES VIÁVEIS: Específicas, fundamentadas, alinhadas com realidade brasileira
-- ✅ MÍNIMO 1800 PALAVRAS: Conteúdo substancial em cada seção`;
+- ✅ MÍNIMO 3000 PALAVRAS: Conteúdo substancial e completo
+- ✅ ESTRUTURA COMPLETA: Todas as 12 seções obrigatórias desenvolvidas`;
     
-    // Se o tema não foi fornecido ou é 'nao_definido', peça explicitamente à IA
-    // para identificar o tema mais apropriado e incluir no JSON de resposta.
-    const temaSolicitado = (specifications.tema || '').toString();
-    if (!temaSolicitado || temaSolicitado === 'nao_definido') {
-      // Acrescentar instrução de detecção de tema no prompt
-      prompt += `\n\n**TAREFA ADICIONAL:** Se o campo "Tema" não for claro ou for 'nao_definido', identifique o TEMA MAIS APROPRIADO que descreve o conteúdo das especificações dadas. No JSON de retorno inclua os campos adicionais: ` +
-        `"detected_tema": "<id_do_tema>", "detected_confianca": <0-100>, "detected_palavras": ["palavra1","palavra2"] . Use um id curto (ex: 'agricultura', 'defesa_civil', 'fiscalizacao', 'monitoramento', 'relacoes' ou um id descritivo se necessário).`;
-    }
+    // SEMPRE pedir à IA para identificar o tema correto baseado no pedido
+    // NÃO restringir aos temas pré-definidos - permitir QUALQUER tema que faça sentido
+    prompt += `\n\n**TAREFA CRÍTICA - IDENTIFICAÇÃO DO TEMA CORRETO:** 
+      
+As especificações do usuário são: "${specifications.especificacoes || ''}"
+
+⚠️ **IMPORTANTE**: Identifique o TEMA CORRETO que REALMENTE FAZ SENTIDO com o pedido do usuário. 
+
+**VOCÊ PODE E DEVE IDENTIFICAR QUALQUER TEMA QUE FAÇA SENTIDO** - NÃO se limite a uma lista restrita.
+
+Temas de referência (você pode criar QUALQUER OUTRO que faça sentido):
+- **defesa_civil**: Para desastres, emergências, chuvas, enchentes, deslizamentos, tempestades, alertas meteorológicos, proteção civil
+- **agricultura**: Para produção agrícola, safras, plantio, cultivo, produção rural, agronegócio, solos agrícolas
+- **monitoramento**: Para monitoramento costeiro, marinho, ambiental
+- **fiscalizacao**: Para questões ambientais, fiscalização, desmatamento, proteção ambiental
+- **relacoes**: Para relações internacionais, diplomacia, acordos comerciais
+- **seguranca_publica**: Para segurança pública, policiamento, criminalidade, violência urbana, segurança no centro/cidade
+- **infraestrutura**: Para infraestrutura viária, estradas, rodovias, pavimentação, obras públicas, transporte
+- **saude**: Para saúde pública, hospitais, epidemias, campanhas de saúde
+- **educacao**: Para educação, escolas, ensino, alfabetização
+- **habitacao**: Para habitação, moradia, habitação social
+- **assistencia_social**: Para assistência social, programas sociais, bolsa família
+- **trabalho_emprego**: Para trabalho, emprego, desemprego, qualificação profissional
+- **economia_financeiro**: Para economia, finanças, orçamento, investimento
+- **energia**: Para energia elétrica, usinas, distribuição de energia
+- **comunicacao_midia**: Para comunicação, mídia, imprensa
+- **tecnologia_inovacao**: Para tecnologia, inovação, ciência, pesquisa
+- **turismo**: Para turismo, destinos, hotelaria
+- **esporte_lazer**: Para esporte, lazer, recreação
+- **cultura**: Para cultura, arte, patrimônio cultural
+- **desenvolvimento_social**: Para desenvolvimento social, inclusão, desigualdade
+- **cidades_urbanismo**: Para planejamento urbano, urbanismo, cidade
+- **saneamento**: Para saneamento, água, esgoto, coleta de lixo
+- **transporte_mobilidade**: Para transporte público, mobilidade urbana, ciclovias
+- **meio_ambiente_clima**: Para meio ambiente, mudanças climáticas, preservação
+- **recursos_hidricos**: Para recursos hídricos, bacias hidrográficas, barragens
+- **mineracao**: Para mineração, garimpo, jazidas
+- **desenvolvimento_regional**: Para desenvolvimento regional, polos econômicos
+- **ciencia_pesquisa**: Para ciência, pesquisa científica, universidades
+- **populacao_indigena**: Para povos indígenas, terras indígenas
+- **igualdade_genero**: Para igualdade de gênero, políticas para mulheres
+- **racismo_igualdade_racial**: Para igualdade racial, políticas para população negra
+- **direito_humanos**: Para direitos humanos, violação de direitos
+- **planejamento_gestao**: Para planejamento, gestão pública, políticas públicas
+- **transparencia_controle**: Para transparência, controle, auditoria
+- **trabalho_infantil**: Para trabalho infantil, proteção da criança
+- **terceira_idade**: Para idosos, políticas para terceira idade
+- **pessoas_deficiencia**: Para pessoas com deficiência, acessibilidade
+
+**MAS VOCÊ PODE CRIAR QUALQUER OUTRO TEMA QUE FAÇA SENTIDO:**
+- Use sua análise inteligente para identificar o tema CORRETO baseado no CONTEÚDO REAL do pedido
+- Se o pedido é sobre algo que não se encaixa perfeitamente nos exemplos acima, CRIE um tema descritivo adequado
+- Exemplos de temas que você pode criar: "seguranca_urbana", "mobilidade_urbana", "saude_publica", "infraestrutura_rodoviaria", etc.
+
+**REGRAS OBRIGATÓRIAS:**
+- O tema DEVE fazer sentido com o título que você vai gerar
+- O tema DEVE fazer sentido com o conteúdo que você vai gerar
+- O tema DEVE refletir REALMENTE o que o usuário pediu
+- Use formato: palavras_em_minusculas_separadas_por_underscore (ex: seguranca_publica, infraestrutura_urbana)
+- Se não tiver certeza, use um tema descritivo genérico baseado nas palavras-chave principais do pedido
+
+No JSON de retorno inclua os campos:
+- "detected_tema": "<nome_do_tema_correto>" (o tema que REALMENTE faz sentido para o pedido - pode ser qualquer tema)
+- "detected_confianca": <0-100> (confiança na detecção)
+- "detected_palavras": ["palavra1","palavra2"] (palavras-chave que indicaram o tema)
+
+EXEMPLOS CORRETOS: 
+- Pedido: "segurança no centro de Recife" → detected_tema: "seguranca_publica" (NÃO "monitoramento_costiero")
+- Pedido: "chuva em Pernambuco" → detected_tema: "defesa_civil"
+- Pedido: "situação dos solos agrícolas" → detected_tema: "agricultura"
+- Pedido: "análise de segurança urbana" → detected_tema: "seguranca_publica" ou "seguranca_urbana"
+- Pedido: "infraestrutura rodoviária" → detected_tema: "infraestrutura" ou "infraestrutura_rodoviaria"
+
+⚠️ **CRÍTICO**: O tema identificado deve ser COERENTE com o título e conteúdo gerados. Se você gerar um título sobre "Segurança no Centro de Recife", o tema NÃO pode ser "Monitoramento Costeiro" - isso não faz sentido! Use sua inteligência para identificar o tema CORRETO baseado no que o usuário REALMENTE pediu.`;
 
     logger.debug('Enviando requisição para OpenAI API');
     const response = await fetch(OPENAI_API_URL, {
@@ -228,7 +599,7 @@ ${dadosEnriquecidos}
           }
         ],
         temperature: 0.7,
-        max_tokens: 4000
+        max_tokens: 8000
       })
     });
 
@@ -283,13 +654,38 @@ ${dadosEnriquecidos}
       fontes: jsonData.fontes?.length || 0
     });
 
+    // Combinar fontes da IA com fontes governamentais
+    const todasAsFontes = [
+      ...(jsonData.fontes || []),
+      ...governmentData.fontes
+    ];
+    
+    // Remover duplicatas por URL
+    const fontesUnicas = todasAsFontes.filter((fonte, index, self) => 
+      index === self.findIndex(f => 
+        (f.url && fonte.url && f.url === fonte.url) ||
+        (f.nome && fonte.nome && f.nome === fonte.nome)
+      )
+    );
+
+    // Priorizar tema detectado pela IA sobre o tema fornecido (se houver)
+    const temaFinal = detectedTema || temaParaUsar || specifications.tema;
+    
     const output = {
       success: true,
       conteudo: jsonData.conteudo || assistantMessage,
-      fontes: jsonData.fontes || []
+      fontes: fontesUnicas
     };
-    if (detectedTema) output.detected_tema = detectedTema;
+    
+    // Sempre retornar o tema detectado/correto
+    if (temaFinal) output.detected_tema = temaFinal;
     if (detectedConfianca !== null) output.detected_confianca = detectedConfianca;
+
+    logger.info('Briefing gerado', { 
+      tema_original: specifications.tema,
+      tema_detectado_ia: detectedTema,
+      tema_final_usado: temaFinal
+    });
 
     return output;
   } catch (error) {
@@ -330,11 +726,36 @@ export const generateBriefingMock = async (specifications) => {
   
   logger.debug('Gerando estrutura de briefing mock');
   
-  // Gerar título baseado nas especificações se não fornecido
-  let titulo = specifications.titulo || 'Briefing Executivo';
-  if (titulo === 'Briefing Executivo' && especificacoes !== 'Nenhuma especificação fornecida') {
-    const palavras = especificacoes.split(' ').slice(0, 6).join(' ');
-    titulo = palavras.length > 50 ? palavras.substring(0, 50) + '...' : palavras;
+  // Gerar título formal baseado nas especificações
+  let titulo = specifications.titulo;
+  
+  if (!titulo || titulo === 'Briefing Executivo' || titulo.trim() === '') {
+    // Criar título formal baseado nas especificações
+    const especificacoesLower = especificacoes.toLowerCase().trim();
+    
+    // Padronizar título - primeira letra maiúscula de cada palavra importante
+    const palavras = especificacoes.split(' ');
+    let tituloFormatado = palavras
+      .slice(0, 10) // Limitar palavras relevantes
+      .map((palavra, idx) => {
+        const p = palavra.toLowerCase();
+        // Não capitalizar artigos/preposições no meio, mas sim no início e palavras importantes
+        if (idx === 0 || ['dos', 'das', 'do', 'da', 'de', 'em', 'no', 'na', 'para', 'com'].indexOf(p) === -1) {
+          return palavra.charAt(0).toUpperCase() + palavra.slice(1).toLowerCase();
+        }
+        return p;
+      })
+      .join(' ');
+    
+    // Adicionar subtítulo formal se necessário
+    if (tituloFormatado.length < 60) {
+      tituloFormatado += ': Análise Técnica e Estratégica';
+    }
+    
+    // Limitar tamanho e garantir formalidade
+    titulo = tituloFormatado.length > 80 
+      ? tituloFormatado.substring(0, 77) + '...' 
+      : tituloFormatado;
   }
 
   // Obter dados temáticos
@@ -453,19 +874,46 @@ ${pesquisaLista}`;
     `${i + 1}. **${s.nome}**\n   ${s.descricao}`
   ).join('\n\n');
 
+  // Analisar especificamente o que foi pedido
+  const especificacoesLower = especificacoes.toLowerCase()
+  let focoEspecifico = ''
+  let acoesNecessarias = ''
+  
+  // Detectar elementos específicos do pedido
+  const localizacoes = ['pernambuco', 'bahia', 'são paulo', 'rio de janeiro', 'minas gerais', 'paraná', 'rio grande do sul', 'goiás', 'mato grosso', 'amazonas', 'nordeste', 'sudeste', 'sul', 'norte', 'centro-oeste']
+  const acoes = ['situação', 'análise', 'monitoramento', 'avaliação', 'estratégia', 'ações', 'medidas', 'soluções', 'problemas', 'desafios']
+  
+  let localizacaoDetectada = localizacoes.find(loc => especificacoesLower.includes(loc))
+  let acaoDetectada = acoes.find(acao => especificacoesLower.includes(acao))
+  
+  if (localizacaoDetectada || acaoDetectada) {
+    focoEspecifico = `O presente briefing aborda ESPECIFICAMENTE a solicitação: "${especificacoes}". 
+    
+Este documento foi elaborado para responder DIRETAMENTE ao que foi solicitado, fornecendo análise, dados e recomendações específicas relacionadas à situação mencionada, não um estudo genérico sobre ${temaNome}.`
+    
+    acoesNecessarias = `Com base na solicitação específica "${especificacoes}", este briefing identifica ações concretas, análises necessárias e estratégias direcionadas para atender ao pedido.`
+  } else {
+    focoEspecifico = `O presente briefing analisa **${temaNome}** conforme especificações fornecidas: "${especificacoes}".`
+    acoesNecessarias = `Este documento oferece análise técnica e estratégica específica relacionada ao pedido, com foco em identificar o que deve ser feito para atender à solicitação.`
+  }
+
   const conteudo = `# ${titulo || 'Briefing: ' + temaNome}
 
 ## Resumo Executivo
 
-O presente briefing analisa **${temaNome}** conforme especificações fornecidas: "${especificacoes}".
+${focoEspecifico}
 
-**Documento:**
-- **Data:** ${dataAtual}
+**Solicitação Específica do Usuário:** "${especificacoes}"
+
+${acoesNecessarias}
+
+**Contexto do Documento:**
+- **Data de Elaboração:** ${dataAtual}
 - **Prioridade:** ${prioridadeNome}
 - **Tema:** ${temaNome}
-- **Fontes Consultadas:** ${institucional.length + academico.length} instituições especializadas
+- **Fontes Consultadas:** ${institucional.length + academico.length} instituições especializadas e publicações técnicas
 
-Este documento integra análise institucional, dados brasileiros e recomendações estratégicas fundamentadas em literatura técnica.
+O briefing foi desenvolvido com base em informações oficiais de órgãos federais, estaduais e institutos de pesquisa brasileiros, garantindo que as análises e recomendações sejam específicas para atender à solicitação realizada.
 
 ${conteudoEspecifico}
 
@@ -474,16 +922,28 @@ ${conteudoEspecifico}
 A compreensão adequada de **${temaNome}** requer análise multidimensional considerando aspectos institucionais, técnicos, operacionais e sociais.
 
 **Desafios Identificados:**
-- Coordenação e alinhamento entre instituições em diferentes níveis federativos
-- Capacidade técnica e recursos financeiros para implementação efetiva
-- Sustentabilidade de ações através de ciclos políticos
-- Integração de conhecimento técnico com políticas públicas
+
+A análise do contexto de **${temaNome}** revela desafios estruturais e operacionais que demandam atenção estratégica:
+
+- **Coordenação Institucional:** A necessidade de alinhamento entre instituições em diferentes níveis federativos (federal, estadual e municipal) apresenta-se como desafio permanente. A fragmentação de competências e a falta de protocolos claros de comunicação podem comprometer a efetividade das políticas públicas relacionadas.
+
+- **Capacidades Técnicas e Financeiras:** A implementação efetiva de ações estratégicas depende diretamente da disponibilidade de recursos técnicos especializados e financeiros adequados. Investimentos em capacitação e infraestrutura são fundamentais para superar limitações operacionais.
+
+- **Sustentabilidade Política:** A continuidade de políticas e programas através de diferentes ciclos políticos e administrativos representa desafio significativo. Estruturas permanentes e legislação robusta são essenciais para garantir perenidade das ações.
+
+- **Integração Técnica-Política:** A tradução efetiva do conhecimento técnico e acadêmico em políticas públicas práticas e implementáveis requer processos estruturados de diálogo entre pesquisadores, gestores públicos e tomadores de decisão.
 
 **Oportunidades Estratégicas:**
-- Alinhamento com diretrizes federais e compromissos internacionais
-- Aproveitamento de avanços tecnológicos e metodológicos
-- Potencial de sinergia com programas governamentais relacionados
-- Fortalecimento de capacidades institucionais
+
+Identificam-se oportunidades relevantes para avanço em **${temaNome}**:
+
+- **Alinhamento com Diretrizes Nacionais:** A existência de marcos legais e diretrizes federais estabelecidas oferece base sólida para desenvolvimento de ações estratégicas alinhadas com objetivos nacionais e compromissos internacionais.
+
+- **Tecnologia e Inovação:** Avanços tecnológicos recentes, especialmente em áreas de monitoramento, análise de dados e comunicação, apresentam potencial significativo para modernização e aprimoramento de processos e metodologias.
+
+- **Sinergias Programáticas:** O potencial de integração e sinergia com programas governamentais relacionados e em curso pode potencializar resultados e otimizar uso de recursos públicos disponíveis.
+
+- **Fortalecimento Institucional:** Oportunidades de fortalecimento de capacidades institucionais através de parcerias estratégicas, programas de capacitação e modernização de estruturas organizacionais.
 
 ## Dados Principais
 

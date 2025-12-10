@@ -4,12 +4,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getDatabase, saveDatabase, addBriefingComment, toggleBriefingReaction } from '../data/database'
 import { getCurrentUser } from '../utils/auth'
 import { toast } from 'sonner'
-import { ArrowLeft, Save, Edit, CheckCircle } from 'lucide-react'
+import { ArrowLeft, Save, Edit, CheckCircle, Download } from 'lucide-react'
+import jsPDF from 'jspdf'
+import html2canvas from 'html2canvas'
 import { canApproveBriefings } from '../utils/auth'
 import { format } from 'date-fns'
 import ptBR from 'date-fns/locale/pt-BR'
 import ReactMarkdown from 'react-markdown'
-import { getPriorityColors, getThemeName } from '../services/themeDetectionService'
+import { getPriorityColors, getThemeName, THEME_KEYWORDS } from '../services/themeDetectionService'
 
 export default function BriefingDetail() {
   const { id } = useParams()
@@ -142,6 +144,260 @@ export default function BriefingDetail() {
     updateMutation.mutate(formData)
   }
 
+  const handleDownloadPDF = async () => {
+    if (!briefing) return
+
+    try {
+      toast.info('Gerando PDF...', { duration: 2000 })
+      
+      // Criar elemento temporário para capturar o conteúdo formatado
+      const element = document.createElement('div')
+      element.style.width = '794px' // A4 width em pixels (210mm * 3.78px/mm para melhor qualidade)
+      element.style.padding = '60px'
+      element.style.backgroundColor = '#ffffff'
+      element.style.color = '#1f2937'
+      element.style.fontFamily = 'Arial, sans-serif'
+      element.style.fontSize = '14px'
+      
+      // Criar conteúdo formatado similar ao site
+      const prioridadeEmoji = briefing.prioridade === 'alta' ? '🔴' : briefing.prioridade === 'media' ? '🟡' : '🟢'
+      const prioridadeTexto = briefing.prioridade.charAt(0).toUpperCase() + briefing.prioridade.slice(1)
+      
+      element.innerHTML = `
+        <div style="margin-bottom: 30px;">
+          <h1 style="font-size: 32px; font-weight: bold; color: #111827; margin-bottom: 20px; line-height: 1.3;">
+            ${briefing.titulo}
+          </h1>
+          <div style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap;">
+            <span style="display: inline-flex; align-items: center; padding: 6px 12px; border-radius: 9999px; font-size: 14px; font-weight: 600; background-color: ${
+              briefing.prioridade === 'alta' ? '#fee2e2' : briefing.prioridade === 'media' ? '#fef3c7' : '#d1fae5'
+            }; color: ${
+              briefing.prioridade === 'alta' ? '#991b1b' : briefing.prioridade === 'media' ? '#92400e' : '#065f46'
+            };">
+              ${prioridadeEmoji} ${prioridadeTexto}
+            </span>
+            <span style="display: inline-flex; align-items: center; padding: 6px 12px; border-radius: 9999px; font-size: 14px; font-weight: 600; background-color: #dbeafe; color: #1e40af;">
+              📋 ${getThemeName(briefing.tema)}
+            </span>
+          </div>
+          <div style="font-size: 13px; color: #4b5563; line-height: 1.8;">
+            <div><strong>Responsável:</strong> ${briefing.responsavel_nome}</div>
+            <div><strong>Criado em:</strong> ${format(new Date(briefing.data_criacao), "dd 'de' MMMM 'de' yyyy 'às' HH:mm", { locale: ptBR })}</div>
+            <div><strong>Visualizações:</strong> ${briefing.visualizacoes || 0}</div>
+          </div>
+        </div>
+        <hr style="border: none; border-top: 2px solid #e5e7eb; margin: 30px 0;" />
+        <div id="briefing-content" style="line-height: 1.8; color: #374151;">
+          ${await convertMarkdownToHTML(briefing.conteudo)}
+        </div>
+      `
+      
+      // Adicionar fontes se existirem
+      if (briefing.fontes && briefing.fontes.length > 0) {
+        let fontesHTML = '<hr style="border: none; border-top: 2px solid #e5e7eb; margin: 40px 0;" /><h3 style="font-size: 18px; font-weight: 600; color: #111827; margin-bottom: 16px;">📚 Fontes Utilizadas</h3><ul style="list-style: none; padding: 0; margin: 0;">'
+        briefing.fontes.forEach((fonte, index) => {
+          const fonteTexto = typeof fonte === 'string' 
+            ? fonte 
+            : fonte?.url || fonte?.title || fonte?.text || fonte?.nome || JSON.stringify(fonte)
+          const fonteDescricao = typeof fonte === 'object' && fonte?.descricao ? ` - ${fonte.descricao}` : ''
+          fontesHTML += `<li style="margin-bottom: 10px; color: #374151; padding-left: 20px; font-size: 13px; line-height: 1.6;">
+            <span style="color: #00897b; font-weight: bold;">${index + 1}.</span> 
+            <span>${fonteTexto}${fonteDescricao}</span>
+          </li>`
+        })
+        fontesHTML += '</ul>'
+        element.innerHTML += fontesHTML
+      }
+      
+      // Adicionar ao DOM temporariamente (fora da tela)
+      element.style.position = 'absolute'
+      element.style.left = '-9999px'
+      element.style.top = '0'
+      document.body.appendChild(element)
+      
+      // Aguardar renderização
+      await new Promise(resolve => setTimeout(resolve, 300))
+      
+      // Capturar como imagem
+      const canvas = await html2canvas(element, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff'
+      })
+      
+      // Remover elemento temporário
+      document.body.removeChild(element)
+      
+      // Criar PDF
+      const imgData = canvas.toDataURL('image/png', 1.0)
+      const pdf = new jsPDF('p', 'mm', 'a4')
+      const pdfWidth = pdf.internal.pageSize.getWidth()
+      const pdfHeight = pdf.internal.pageSize.getHeight()
+      
+      // Margens de 10mm
+      const pageWidth = pdfWidth - 20
+      const pageHeight = pdfHeight - 20
+      
+      // Calcular dimensões
+      const imgWidth = canvas.width
+      const imgHeight = canvas.height
+      const ratio = pageWidth / imgWidth
+      const imgScaledWidth = pageWidth
+      const imgScaledHeight = imgHeight * ratio
+      
+      // Adicionar imagem ao PDF
+      if (imgScaledHeight <= pageHeight) {
+        // Cabe em uma página
+        pdf.addImage(imgData, 'PNG', 10, 10, imgScaledWidth, imgScaledHeight)
+      } else {
+        // Precisa de múltiplas páginas
+        let heightLeft = imgScaledHeight
+        let position = 0
+        
+        pdf.addImage(imgData, 'PNG', 10, 10, imgScaledWidth, imgScaledHeight, undefined, 'FAST')
+        heightLeft -= pageHeight
+        
+        while (heightLeft > 0) {
+          position = heightLeft - imgScaledHeight
+          pdf.addPage()
+          pdf.addImage(imgData, 'PNG', 10, 10 + position, imgScaledWidth, imgScaledHeight, undefined, 'FAST')
+          heightLeft -= pageHeight
+        }
+      }
+      
+      // Baixar PDF
+      const fileName = `Briefing_${briefing.titulo.replace(/[^a-z0-9]/gi, '_').substring(0, 50)}_${format(new Date(), 'yyyy-MM-dd')}.pdf`
+      pdf.save(fileName)
+      
+      toast.success('PDF gerado com sucesso!')
+    } catch (error) {
+      console.error('Erro ao gerar PDF:', error)
+      toast.error('Erro ao gerar PDF. Tente novamente.')
+    }
+  }
+
+  // Função auxiliar para converter Markdown básico em HTML
+  const convertMarkdownToHTML = async (markdown) => {
+    if (!markdown) return ''
+    
+    let html = ''
+    const lines = markdown.split('\n')
+    let inList = false
+    let inParagraph = false
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim()
+      
+      // Títulos
+      if (line.startsWith('### ')) {
+        if (inParagraph) {
+          html += '</p>'
+          inParagraph = false
+        }
+        if (inList) {
+          html += '</ul>'
+          inList = false
+        }
+        html += `<h3 style="font-size: 18px; font-weight: 600; color: #1f2937; margin-top: 24px; margin-bottom: 12px;">${line.substring(4)}</h3>`
+        continue
+      }
+      if (line.startsWith('## ')) {
+        if (inParagraph) {
+          html += '</p>'
+          inParagraph = false
+        }
+        if (inList) {
+          html += '</ul>'
+          inList = false
+        }
+        html += `<h2 style="font-size: 22px; font-weight: 700; color: #111827; margin-top: 28px; margin-bottom: 14px; padding-bottom: 6px; border-bottom: 2px solid #00897b;">${line.substring(3)}</h2>`
+        continue
+      }
+      if (line.startsWith('# ')) {
+        if (inParagraph) {
+          html += '</p>'
+          inParagraph = false
+        }
+        if (inList) {
+          html += '</ul>'
+          inList = false
+        }
+        html += `<h1 style="font-size: 28px; font-weight: 700; color: #111827; margin-top: 32px; margin-bottom: 18px;">${line.substring(2)}</h1>`
+        continue
+      }
+      
+      // Listas
+      if (line.startsWith('- ') || line.startsWith('* ')) {
+        if (inParagraph) {
+          html += '</p>'
+          inParagraph = false
+        }
+        if (!inList) {
+          html += '<ul style="list-style-type: disc; margin-bottom: 16px; padding-left: 30px;">'
+          inList = true
+        }
+        const listContent = processInlineMarkdown(line.substring(2))
+        html += `<li style="margin-bottom: 8px; color: #374151;">${listContent}</li>`
+        continue
+      }
+      
+      // Linha vazia
+      if (line === '') {
+        if (inParagraph) {
+          html += '</p>'
+          inParagraph = false
+        }
+        if (inList) {
+          html += '</ul>'
+          inList = false
+        }
+        continue
+      }
+      
+      // Parágrafo normal
+      if (inList) {
+        html += '</ul>'
+        inList = false
+      }
+      if (!inParagraph) {
+        html += '<p style="margin-bottom: 14px; color: #374151; line-height: 1.7; font-size: 14px;">'
+        inParagraph = true
+      } else {
+        html += ' '
+      }
+      html += processInlineMarkdown(line)
+    }
+    
+    if (inParagraph) {
+      html += '</p>'
+    }
+    if (inList) {
+      html += '</ul>'
+    }
+    
+    return html
+  }
+  
+  // Processa markdown inline (negrito, itálico, links)
+  const processInlineMarkdown = (text) => {
+    if (!text) return ''
+    
+    // Converter links primeiro para evitar conflitos
+    text = text.replace(/\[([^\]]+)\]\(([^\)]+)\)/g, '<a href="$2" style="color: #2563eb; text-decoration: underline;">$1</a>')
+    
+    // Converter negrito (deve vir antes do itálico)
+    text = text.replace(/\*\*([^*]+)\*\*/g, '<strong style="font-weight: 700; color: #111827;">$1</strong>')
+    
+    // Converter itálico
+    text = text.replace(/\*([^*]+)\*/g, '<em style="font-style: italic;">$1</em>')
+    
+    // Converter código inline
+    text = text.replace(/`([^`]+)`/g, '<code style="background-color: #f3f4f6; padding: 2px 6px; border-radius: 4px; color: #dc2626; font-family: monospace; font-size: 0.9em;">$1</code>')
+    
+    return text
+  }
+
   // Debug: log do estado
   useEffect(() => {
     console.log('BriefingDetail render - id:', id, 'briefing:', briefing, 'isLoading:', isLoading)
@@ -237,11 +493,15 @@ export default function BriefingDetail() {
                 onChange={(e) => setFormData({ ...formData, tema: e.target.value })}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-fontea-primary focus:border-transparent"
               >
-                <option value="defesa_civil">Defesa Civil</option>
-                <option value="agricultura">Agricultura</option>
-                <option value="monitoramento">Monitoramento Costeiro</option>
-                <option value="fiscalizacao">Fiscalização Ambiental</option>
-                <option value="relacoes">Relações Internacionais</option>
+                <option value="">Selecione um tema</option>
+                {Object.keys(THEME_KEYWORDS).map((temaKey) => (
+                  <option key={temaKey} value={temaKey}>
+                    {getThemeName(temaKey)}
+                  </option>
+                ))}
+                {formData.tema && !THEME_KEYWORDS[formData.tema] && (
+                  <option value={formData.tema}>{getThemeName(formData.tema)}</option>
+                )}
               </select>
             </div>
 
@@ -333,6 +593,16 @@ export default function BriefingDetail() {
                   Editar
                 </button>
               </div>
+            </div>
+
+            <div className="mt-4 flex items-center gap-2">
+              <button
+                onClick={handleDownloadPDF}
+                className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition whitespace-nowrap"
+              >
+                <Download className="h-5 w-5" />
+                Baixar PDF
+              </button>
             </div>
 
             <div className="flex items-center gap-4 text-sm text-gray-600 flex-wrap">

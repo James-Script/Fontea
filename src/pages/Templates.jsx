@@ -7,7 +7,7 @@ import { toast } from 'sonner'
 import { Plus, Edit, Trash2, FileText, Sparkles, Loader2 } from 'lucide-react'
 import { cn } from '../utils/cn'
 import { generateBriefingWithAI, generateBriefingMock } from '../services/aiService'
-import { detectTheme } from '../services/themeDetectionService'
+import { detectTheme, getThemeName, THEME_KEYWORDS } from '../services/themeDetectionService'
 
 export default function Templates() {
   const navigate = useNavigate()
@@ -234,11 +234,14 @@ export default function Templates() {
       if (result.success) {
         const db = getDatabase()
         const newId = `BRI${String(db.briefings.length + 1).padStart(3, '0')}`
+        // Priorizar tema detectado pela IA
+        const temaFinal = result?.detected_tema || deteccao.tema || 'nao_definido';
+        
         const newBriefing = {
           id: newId,
           titulo: scratchTitle || (result.titulo || 'Briefing Executivo'),
           conteudo: result.conteudo,
-          tema: deteccao.tema,
+          tema: temaFinal,
           status: 'em_revisao',
           prioridade: scratchPriority,
           responsavel_id: user?.userId,
@@ -365,11 +368,15 @@ export default function Templates() {
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-fontea-primary focus:border-transparent"
                 required
               >
-                <option value="defesa_civil">Defesa Civil</option>
-                <option value="agricultura">Agricultura</option>
-                <option value="monitoramento">Monitoramento Costeiro</option>
-                <option value="fiscalizacao">Fiscalização Ambiental</option>
-                <option value="relacoes">Relações Internacionais</option>
+                <option value="">Selecione um tema</option>
+                {Object.keys(THEME_KEYWORDS).map((temaKey) => (
+                  <option key={temaKey} value={temaKey}>
+                    {getThemeName(temaKey)}
+                  </option>
+                ))}
+                {formData.tema && !THEME_KEYWORDS[formData.tema] && (
+                  <option value={formData.tema}>{getThemeName(formData.tema)}</option>
+                )}
               </select>
             </div>
             <div className="flex items-center gap-2">

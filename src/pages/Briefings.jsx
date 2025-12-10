@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { getDatabase, saveDatabase, addBriefingComment, toggleBriefingReaction } from '../data/database'
 import { generateBriefingWithAI, generateBriefingMock } from '../services/aiService'
-import { detectTheme } from '../services/themeDetectionService'
+import { detectTheme, getThemeName } from '../services/themeDetectionService'
 import { getCurrentUser, canApproveBriefings, canDeleteBriefings } from '../utils/auth'
 import { toast } from 'sonner'
 import {
@@ -257,11 +257,14 @@ export default function Briefings() {
           return String(f)
         })
 
+        // Priorizar tema detectado pela IA
+        const temaFinal = result?.detected_tema || deteccao.tema || 'nao_definido';
+        
         const newBriefing = {
           id: newId,
           titulo: inferredTitle,
           conteudo: content,
-          tema: deteccao.tema || 'nao_definido',
+          tema: temaFinal, // Usar tema identificado pela IA
           status: 'em_revisao',
           prioridade: scratchPriority,
           responsavel_id: user?.userId,
@@ -434,7 +437,7 @@ export default function Briefings() {
                   <span className="font-medium">Responsável:</span> {briefing.responsavel_nome}
                 </p>
                 <p className="text-sm text-gray-600">
-                  <span className="font-medium">Tema:</span> {(briefing.tema || 'Não definido').replace('_', ' ').toUpperCase()}
+                  <span className="font-medium">Tema:</span> {getThemeName(briefing.tema)}
                 </p>
                 <p className="text-sm text-gray-600">
                   <span className="font-medium">Criado em:</span>{' '}
