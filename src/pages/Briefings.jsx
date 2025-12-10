@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { getDatabase, saveDatabase } from '../data/database'
+import { getDatabase, saveDatabase, addBriefingComment, toggleBriefingReaction } from '../data/database'
+import { generateBriefingWithAI, generateBriefingMock } from '../services/aiService'
+import { detectTheme } from '../services/themeDetectionService'
 import { getCurrentUser, canApproveBriefings, canDeleteBriefings } from '../utils/auth'
 import { toast } from 'sonner'
 import {
@@ -23,12 +25,20 @@ export default function Briefings() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const user = getCurrentUser()
+  console.log('Briefings component rendered, user:', user)
+  
   const [searchTerm, setSearchTerm] = useState('')
   const [filterStatus, setFilterStatus] = useState('todos')
+  const [showCreateFromZero, setShowCreateFromZero] = useState(false)
+  const [briefingSpec, setBriefingSpec] = useState('')
+  const [scratchTitle, setScratchTitle] = useState('')
+  const [scratchPriority, setScratchPriority] = useState('media')
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [openCommentsId, setOpenCommentsId] = useState(null)
   const canApprove = canApproveBriefings()
   const canDelete = canDeleteBriefings()
 
-  const { data: briefings } = useQuery({
+  const { data: briefings = [] } = useQuery({
     queryKey: ['briefings'],
     queryFn: () => {
       const db = getDatabase()
@@ -41,6 +51,30 @@ export default function Briefings() {
         }))
     }
   })
+
+  // Helpers
+  const extractTitleFromContent = (content, specFallback) => {
+    if (!content) return null
+    // Try to find a Markdown H1 or H2
+    const lines = content.split('\n').map(l => l.trim()).filter(Boolean)
+    for (const line of lines) {
+      if (line.startsWith('# ')) return line.replace('# ', '').trim()
+      if (line.startsWith('## ')) return line.replace('## ', '').trim()
+    }
+    // Fallback: first non-empty line without markdown
+    if (lines.length > 0) {
+      const first = lines[0].replace(/^#+\s*/, '').trim()
+      if (first.length > 0) return first.split(/[\.\?\!]/)[0].trim()
+    }
+    // As last resort, use part of the spec
+    if (specFallback) {
+      const s = specFallback.trim()
+      const firstSentence = s.split(/[\.\?\!]/)[0]
+      const words = firstSentence.split(/\s+/).slice(0, 8)
+      return words.join(' ').replace(/[\n\r]/g, '').trim()
+    }
+    return 'Briefing Executivo'
+  }
 
   const approveMutation = useMutation({
     mutationFn: async (briefingId) => {
@@ -112,6 +146,155 @@ export default function Briefings() {
     }
   })
 
+  const requestReviewMutation = useMutation({
+    mutationFn: async (briefingId) => {
+      const db = getDatabase()
+      const briefingIndex = db.briefings.findIndex(b => b.id === briefingId)
+      if (briefingIndex !== -1) {
+        const briefing = db.briefings[briefingIndex]
+        briefing.status = 'em_revisao'
+        briefing.editado_por = user?.userId
+        if (!briefing.historico_edicoes) briefing.historico_edicoes = []
+        briefing.historico_edicoes.push({
+          usuario: user?.nome,
+          acao: 'Solicitado revisão',
+          data: new Date().toISOString()
+        })
+        briefing.data_atualizacao = new Date().toISOString()
+        saveDatabase(db)
+      }
+      return briefingId
+    },
+    onSuccess: () => {
+      toast.success('Solicitação de revisão enviada!')
+      queryClient.invalidateQueries(['briefings'])
+    },
+    onError: () => {
+      toast.error('Erro ao solicitar revisão')
+    }
+  })
+
+  const addCommentMutation = useMutation({
+    mutationFn: async ({ briefingId, texto }) => {
+      const userId = user?.userId
+      const usuario = user?.nome || 'Anônimo'
+      return addBriefingComment(briefingId, { usuario, texto })
+    },
+    onSuccess: () => {
+      toast.success('Comentário adicionado')
+      queryClient.invalidateQueries(['briefings'])
+    },
+    onError: () => toast.error('Erro ao adicionar comentário')
+  })
+
+  const toggleReactionMutation = useMutation({
+    mutationFn: async ({ briefingId, reaction }) => {
+      return toggleBriefingReaction(briefingId, user?.userId, reaction)
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries(['briefings'])
+    },
+    onError: () => toast.error('Erro ao registrar reação')
+  })
+
+  const handleGenerateFromScratch = async () => {
+    if (!briefingSpec.trim()) {
+      toast.error('Por favor, descreva o briefing que deseja gerar')
+      return
+    }
+    setIsGenerating(true)
+    toast.info('Gerando briefing com IA...')
+    try {
+      const deteccao = detectTheme(briefingSpec)
+
+      // Se não detectar tema, não bloquear a geração: avisar e prosseguir com fallback
+      if (!deteccao.tema) {
+        toast.warning('Não foi possível detectar o tema automaticamente. Irei gerar um briefing genérico — por favor revise e ajuste o tema depois.')
+      }
+
+      const temaParaGerar = deteccao.tema || 'nao_definido'
+
+      const apiKey = import.meta.env.VITE_OPENAI_API_KEY
+      const result = apiKey
+        ? await generateBriefingWithAI({
+            titulo: scratchTitle || 'Briefing Executivo',
+            tema: temaParaGerar,
+            prioridade: scratchPriority,
+            especificacoes: briefingSpec
+          })
+        : await generateBriefingMock({
+            titulo: scratchTitle || 'Briefing Executivo',
+            tema: temaParaGerar,
+            prioridade: scratchPriority,
+            especificacoes: briefingSpec
+          })
+      console.log('AI generation result:', result)
+
+      // Se a IA retornou um tema detectado, atualizamos a deteccao para usar esse tema
+      if (result?.detected_tema) {
+        // sobrescreve deteccao.tema para o tema que a IA detectou
+        // mantendo a confiança quando disponível
+        deteccao.tema = result.detected_tema
+        deteccao.confianca = result.detected_confianca || deteccao.confianca || 0
+        toast.success(`Tema detectado automaticamente: ${deteccao.tema}`)
+      }
+      if (result.success) {
+        const db = getDatabase()
+        const newId = `BRI${String(db.briefings.length + 1).padStart(3, '0')}`
+        // Normalize title and content
+        const inferredTitle = scratchTitle || result.titulo || extractTitleFromContent(result.conteudo, briefingSpec)
+        let content = result.conteudo || ''
+        // Ensure content starts with an H1 using the inferred title
+        const hasH1 = /(^|\n)\s*#\s+/.test(content)
+        if (!hasH1) {
+          content = `# ${inferredTitle}\n\n${content}`
+        }
+
+        // Normalize fontes (could be strings or objects)
+        const fontes = (result.fontes || []).map(f => {
+          if (typeof f === 'string') return f
+          if (f && typeof f === 'object') return f.url || f.title || f.text || JSON.stringify(f)
+          return String(f)
+        })
+
+        const newBriefing = {
+          id: newId,
+          titulo: inferredTitle,
+          conteudo: content,
+          tema: deteccao.tema || 'nao_definido',
+          status: 'em_revisao',
+          prioridade: scratchPriority,
+          responsavel_id: user?.userId,
+          responsavel_nome: user?.nome,
+          editado_por: null,
+          historico_edicoes: [],
+          fontes: fontes,
+          data_criacao: new Date().toISOString(),
+          data_atualizacao: new Date().toISOString(),
+          visualizacoes: 0,
+          template_origem: null,
+          comentarios: [],
+          reacoes: {}
+        }
+        db.briefings.push(newBriefing)
+        saveDatabase(db)
+        toast.success('Briefing gerado com sucesso!')
+        queryClient.invalidateQueries(['briefings'])
+        setShowCreateFromZero(false)
+        setBriefingSpec('')
+        setScratchTitle('')
+        // navigate to briefing
+        setTimeout(() => navigate(`/briefings/${newBriefing.id}`), 500)
+      } else {
+        toast.error(result.error || 'Erro ao gerar briefing')
+      }
+    } catch (error) {
+      toast.error('Erro ao gerar briefing: ' + error.message)
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
   const filteredBriefings = briefings?.filter(briefing => {
     const matchesSearch = briefing.titulo.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          briefing.responsavel_nome.toLowerCase().includes(searchTerm.toLowerCase())
@@ -139,8 +322,39 @@ export default function Briefings() {
     return badges[prioridade] || badges.media
   }
 
+  console.log('Briefings rendering main content, briefings count:', briefings?.length || 0)
+
   return (
     <div className="space-y-6">
+      {/* Modal: Gerar do Zero */}
+      {showCreateFromZero && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-2xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold">Gerar Briefing do Zero</h2>
+              <button onClick={() => setShowCreateFromZero(false)} className="text-gray-500">Fechar</button>
+            </div>
+
+            <div className="space-y-3">
+              <input type="text" placeholder="Título (opcional)" value={scratchTitle} onChange={(e) => setScratchTitle(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded" />
+              <div className="flex gap-3">
+                <select value={scratchPriority} onChange={(e) => setScratchPriority(e.target.value)} className="px-3 py-2 border border-gray-300 rounded">
+                  <option value="baixa">Baixa</option>
+                  <option value="media">Média</option>
+                  <option value="alta">Alta</option>
+                </select>
+                <div className="flex-1">
+                  <textarea value={briefingSpec} onChange={(e) => setBriefingSpec(e.target.value)} rows={6} placeholder="Descreva as especificações do briefing..." className="w-full px-3 py-2 border border-gray-300 rounded" />
+                </div>
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button onClick={() => setShowCreateFromZero(false)} className="px-4 py-2 border rounded">Cancelar</button>
+                <button onClick={handleGenerateFromScratch} disabled={isGenerating} className="px-4 py-2 bg-fontea-primary text-white rounded">{isGenerating ? 'Gerando...' : 'Gerar'}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -149,13 +363,15 @@ export default function Briefings() {
             Gerencie todos os briefings do sistema
           </p>
         </div>
-        <button
-          onClick={() => navigate('/briefings/new')}
-          className="flex items-center gap-2 px-4 py-2 bg-fontea-primary text-white rounded-lg hover:bg-fontea-secondary transition"
-        >
-          <Plus className="h-5 w-5" />
-          Novo Briefing
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowCreateFromZero(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-fontea-primary text-white rounded-lg hover:bg-fontea-secondary transition"
+          >
+            <Plus className="h-5 w-5" />
+            Novo Briefing
+          </button>
+        </div>
       </div>
 
       {/* Filtros */}
@@ -218,7 +434,7 @@ export default function Briefings() {
                   <span className="font-medium">Responsável:</span> {briefing.responsavel_nome}
                 </p>
                 <p className="text-sm text-gray-600">
-                  <span className="font-medium">Tema:</span> {briefing.tema.replace('_', ' ').toUpperCase()}
+                  <span className="font-medium">Tema:</span> {(briefing.tema || 'Não definido').replace('_', ' ').toUpperCase()}
                 </p>
                 <p className="text-sm text-gray-600">
                   <span className="font-medium">Criado em:</span>{' '}
@@ -245,6 +461,20 @@ export default function Briefings() {
                     className="flex items-center justify-center gap-2 px-3 py-2 text-sm text-blue-700 bg-blue-100 rounded-lg hover:bg-blue-200 transition"
                   >
                     <Edit className="h-4 w-4" />
+                  </button>
+                )}
+
+                {briefing.canEdit && briefing.status !== 'em_revisao' && (
+                  <button
+                    onClick={() => {
+                      if (window.confirm('Deseja enviar este briefing para revisão?')) {
+                        requestReviewMutation.mutate(briefing.id)
+                      }
+                    }}
+                    className="flex items-center justify-center gap-2 px-3 py-2 text-sm text-yellow-800 bg-yellow-100 rounded-lg hover:bg-yellow-200 transition"
+                    title="Solicitar Revisão"
+                  >
+                    <Clock className="h-4 w-4" />
                   </button>
                 )}
 
@@ -288,6 +518,85 @@ export default function Briefings() {
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>
+                )}
+              </div>
+
+              {/* Reações e comentários resumo */}
+              <div className="mt-3 border-t border-gray-100 pt-3">
+                <div className="flex items-center justify-between text-sm">
+                  <div className="flex items-center gap-2">
+                    {/* Reactions: thumbs up, clap, handshake, heart, idea, laugh */}
+                    {['like','clap','handshake','love','idea','laugh'].map((r) => {
+                      const labels = { like: '👍', clap: '👏', handshake: '🤝', love: '❤️', idea: '💡', laugh: '😄' }
+                      const users = briefing.reacoes?.[r] || []
+                      const active = users.includes(user?.userId)
+                      return (
+                        <button
+                          key={r}
+                          onClick={() => toggleReactionMutation.mutate({ briefingId: briefing.id, reaction: r })}
+                          className={`px-2 py-1 rounded text-sm ${active ? 'bg-gray-200' : 'bg-transparent'} hover:bg-gray-100`}
+                          title={r}
+                        >
+                          <span className="text-base mr-1">{labels[r]}</span>
+                          <span className="text-xs text-gray-600">{users.length || ''}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => setOpenCommentsId(openCommentsId === briefing.id ? null : briefing.id)}
+                      className="text-gray-500 hover:text-gray-700 text-sm flex items-center gap-2"
+                    >
+                      💬 {briefing.comentarios?.length || 0}
+                    </button>
+                  </div>
+                </div>
+
+                {openCommentsId === briefing.id && (
+                  <div className="mt-3">
+                    <div className="space-y-2 max-h-40 overflow-y-auto mb-2">
+                      {(briefing.comentarios || []).map((c) => (
+                        <div key={c.id} className="text-sm text-gray-700 border-b border-gray-100 pb-2 mb-2">
+                          <div className="font-semibold">{c.usuario} <span className="text-xs text-gray-400">{new Date(c.data).toLocaleString()}</span></div>
+                          <div>{c.texto}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        id={`comment-input-${briefing.id}`}
+                        type="text"
+                        placeholder="Escreva um comentário..."
+                        className="flex-1 px-3 py-2 border border-gray-300 rounded-lg"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            const texto = e.target.value.trim()
+                            if (texto) {
+                              addCommentMutation.mutate({ briefingId: briefing.id, texto })
+                              e.target.value = ''
+                            }
+                          }
+                        }}
+                      />
+                      <button
+                        onClick={() => {
+                          const input = document.querySelector(`#comment-input-${briefing.id}`)
+                          if (input) {
+                            const texto = input.value.trim()
+                            if (texto) {
+                              addCommentMutation.mutate({ briefingId: briefing.id, texto })
+                              input.value = ''
+                            }
+                          }
+                        }}
+                        className="px-3 py-2 bg-fontea-primary text-white rounded-lg"
+                      >
+                        Comentar
+                      </button>
+                    </div>
+                  </div>
                 )}
               </div>
             </div>

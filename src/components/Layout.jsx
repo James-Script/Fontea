@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { useState } from 'react'
 import Logo from './Logo'
+import Breadcrumb from './Breadcrumb'
 import { cn } from '../utils/cn'
 
 export default function Layout() {
@@ -32,7 +33,6 @@ export default function Layout() {
   const menuItems = [
     { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
     { icon: FileText, label: 'Briefings', path: '/briefings' },
-    { icon: FolderOpen, label: 'Templates', path: '/templates' },
     { icon: BarChart3, label: 'Analytics', path: '/analytics' },
   ]
 
@@ -212,7 +212,7 @@ export default function Layout() {
                 <h1 className="ml-2 md:ml-0 text-xl font-semibold text-gray-900">
                   {location.pathname === '/' && 'Dashboard'}
                   {location.pathname.startsWith('/briefings') && 'Briefings'}
-                  {location.pathname === '/templates' && 'Templates'}
+                  
                   {location.pathname === '/analytics' && 'Analytics'}
                   {location.pathname === '/users' && 'Usuários'}
                   {location.pathname.startsWith('/users/register') && 'Cadastrar Funcionário'}
@@ -241,6 +241,7 @@ export default function Layout() {
 
         {/* Page Content */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8">
+          <Breadcrumb />
           <Outlet />
         </main>
       </div>

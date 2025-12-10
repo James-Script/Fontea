@@ -4,8 +4,12 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { getDatabase, saveDatabase } from '../data/database'
 import { getCurrentUser } from '../utils/auth'
 import { toast } from 'sonner'
-import { Save, ArrowLeft, Sparkles, Loader2 } from 'lucide-react'
+import { Save, ArrowLeft, Sparkles, Loader2, Zap } from 'lucide-react'
 import { generateBriefingWithAI, generateBriefingMock } from '../services/aiService'
+import { createLogger } from '../utils/logger'
+import { detectTheme, getPriorityColors } from '../services/themeDetectionService'
+
+const logger = createLogger('NewBriefing');
 
 export default function NewBriefing() {
   const navigate = useNavigate()
@@ -22,7 +26,8 @@ export default function NewBriefing() {
   const [fonteInput, setFonteInput] = useState('')
   const [especificacoes, setEspecificacoes] = useState('')
   const [isGenerating, setIsGenerating] = useState(false)
-  const [useAI, setUseAI] = useState(false)
+  const [temaDetectado, setTemaDetectado] = useState(null)
+  const [confiancaTema, setConfiancaTema] = useState(0)
 
   const createMutation = useMutation({
     mutationFn: async (data) => {
@@ -47,17 +52,20 @@ export default function NewBriefing() {
       return newBriefing
     },
     onSuccess: (briefing) => {
+      logger.info('Briefing criado com sucesso', { id: briefing.id, titulo: briefing.titulo });
       toast.success('Briefing criado com sucesso!')
       queryClient.invalidateQueries(['briefings'])
       navigate(`/briefings/${briefing.id}`)
     },
-    onError: () => {
+    onError: (error) => {
+      logger.error('Erro ao criar briefing', error);
       toast.error('Erro ao criar briefing')
     }
   })
 
   const handleSubmit = (e) => {
     e.preventDefault()
+    logger.info('Enviando novo briefing', { tema: formData.tema, titulo: formData.titulo });
     createMutation.mutate(formData)
   }
 
@@ -80,30 +88,59 @@ export default function NewBriefing() {
 
   const handleGenerateWithAI = async () => {
     if (!especificacoes.trim()) {
+      logger.warn('Tentativa de geração sem especificações');
       toast.error('Por favor, descreva o que você deseja no briefing')
       return
     }
 
     setIsGenerating(true)
+    
+    // Detectar tema automaticamente
+    const deteccao = detectTheme(especificacoes)
+    setTemaDetectado(deteccao.tema)
+    setConfiancaTema(deteccao.confianca)
+    
+    logger.info('Tema detectado automaticamente', { 
+      tema: deteccao.tema, 
+      confianca: deteccao.confianca
+    });
+
+    logger.info('Iniciando geração de briefing com IA', { 
+      tema: deteccao.tema, 
+      prioridade: formData.prioridade,
+      confiancaTema: deteccao.confianca
+    });
+    
+    toast.info(`📊 Tema detectado: ${deteccao.tema} (Confiança: ${deteccao.confianca}%)`)
     toast.info('Gerando briefing com IA... Isso pode levar alguns segundos.')
 
     try {
       const apiKey = import.meta.env.VITE_OPENAI_API_KEY
+      const modoIA = apiKey ? 'OpenAI' : 'Mock';
+      
+      logger.debug(`Usando modo: ${modoIA}`, { hasApiKey: !!apiKey });
+      
       const result = apiKey 
         ? await generateBriefingWithAI({
             titulo: formData.titulo || 'Briefing Executivo',
-            tema: formData.tema,
+            tema: deteccao.tema,
             prioridade: formData.prioridade,
             especificacoes: especificacoes
           })
         : await generateBriefingMock({
             titulo: formData.titulo || 'Briefing Executivo',
-            tema: formData.tema,
+            tema: deteccao.tema,
             prioridade: formData.prioridade,
             especificacoes: especificacoes
           })
 
       if (result.success) {
+        logger.info('Briefing gerado com sucesso', { 
+          tamanhoConteudo: result.conteudo.length,
+          fontes: result.fontes?.length || 0,
+          temaDetectado: deteccao.tema
+        });
+
         // Processar fontes (pode ser array de objetos ou array de strings)
         const fontesProcessadas = result.fontes?.map(f => {
           if (typeof f === 'string') {
@@ -121,6 +158,7 @@ export default function NewBriefing() {
           const tituloMatch = conteudoGerado.match(/^#\s+(.+)$/m)
           if (tituloMatch) {
             tituloGerado = tituloMatch[1].trim()
+            logger.debug('Título extraído do conteúdo', { titulo: tituloGerado });
           }
         }
 
@@ -128,19 +166,23 @@ export default function NewBriefing() {
           ...formData,
           titulo: tituloGerado || formData.titulo,
           conteudo: conteudoGerado,
-          fontes: [...new Set([...formData.fontes, ...fontesProcessadas])] // Evitar duplicatas
+          tema: deteccao.tema,
+          status: 'em_revisao',
+          fontes: [...new Set([...formData.fontes, ...fontesProcessadas])]
         })
         toast.success('Briefing gerado com sucesso! Revise o conteúdo e as fontes antes de salvar.')
         
         // Mostrar informações sobre as fontes geradas
         if (fontesProcessadas.length > 0) {
+          logger.info(`Fontes adicionadas`, { quantidade: fontesProcessadas.length, fontes: fontesProcessadas });
           toast.info(`${fontesProcessadas.length} fonte(s) adicionada(s) automaticamente`)
         }
       } else {
+        logger.error('Erro ao gerar briefing', { erro: result.error });
         toast.error(result.error || 'Erro ao gerar briefing com IA')
       }
     } catch (error) {
-      console.error('Erro ao gerar briefing:', error)
+      logger.error('Exceção ao gerar briefing', error);
       toast.error('Erro ao gerar briefing com IA: ' + (error.message || 'Tente novamente.'))
     } finally {
       setIsGenerating(false)
@@ -236,55 +278,34 @@ export default function NewBriefing() {
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Tema *
-            </label>
-            <select
-              value={formData.tema}
-              onChange={(e) => setFormData({ ...formData, tema: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-fontea-primary focus:border-transparent"
-              required
-            >
-              <option value="defesa_civil">Defesa Civil</option>
-              <option value="agricultura">Agricultura</option>
-              <option value="monitoramento">Monitoramento Costeiro</option>
-              <option value="fiscalizacao">Fiscalização Ambiental</option>
-              <option value="relacoes">Relações Internacionais</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Prioridade *
-            </label>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Prioridade *
+          </label>
+          <div className="space-y-2">
             <select
               value={formData.prioridade}
               onChange={(e) => setFormData({ ...formData, prioridade: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-fontea-primary focus:border-transparent"
+              className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:border-transparent ${
+                getPriorityColors(formData.prioridade).border
+              } focus:ring-fontea-primary`}
               required
             >
-              <option value="baixa">Baixa</option>
-              <option value="media">Média</option>
-              <option value="alta">Alta</option>
+              <option value="baixa">🟢 Baixa - Monitoramento contínuo</option>
+              <option value="media">🟡 Média - Atenção necessária em breve</option>
+              <option value="alta">🔴 Alta - Ação imediata necessária</option>
             </select>
           </div>
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Status Inicial
-          </label>
-          <select
-            value={formData.status}
-            onChange={(e) => setFormData({ ...formData, status: e.target.value })}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-fontea-primary focus:border-transparent"
-          >
-            <option value="rascunho">Rascunho</option>
-            <option value="em_revisao">Enviar para Revisão</option>
-          </select>
-        </div>
+        {temaDetectado && (
+          <div className={`p-4 rounded-lg border-2 ${getPriorityColors(formData.prioridade).bg} ${getPriorityColors(formData.prioridade).border}`}>
+            <p className={`text-sm font-semibold ${getPriorityColors(formData.prioridade).text}`}>
+              📊 Tema detectado automaticamente: <strong>{temaDetectado}</strong> ({confiancaTema}% confiança)
+            </p>
+          </div>
+        )}
+
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">

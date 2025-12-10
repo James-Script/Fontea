@@ -1,14 +1,26 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { getDatabase, saveDatabase } from '../data/database'
+import { getCurrentUser } from '../utils/auth'
 import { toast } from 'sonner'
-import { Plus, Edit, Trash2, FileText } from 'lucide-react'
+import { Plus, Edit, Trash2, FileText, Sparkles, Loader2 } from 'lucide-react'
 import { cn } from '../utils/cn'
+import { generateBriefingWithAI, generateBriefingMock } from '../services/aiService'
+import { detectTheme } from '../services/themeDetectionService'
 
 export default function Templates() {
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const user = getCurrentUser()
   const [editing, setEditing] = useState(null)
   const [showForm, setShowForm] = useState(false)
+  const [showBriefingGenerator, setShowBriefingGenerator] = useState(null)
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [briefingSpec, setBriefingSpec] = useState('')
+  const [showCreateFromZero, setShowCreateFromZero] = useState(false)
+  const [scratchTitle, setScratchTitle] = useState('')
+  const [scratchPriority, setScratchPriority] = useState('media')
   const [formData, setFormData] = useState({
     nome: '',
     descricao: '',
@@ -24,6 +36,17 @@ export default function Templates() {
       return db.templates
     }
   })
+
+  const [searchParams] = useSearchParams()
+
+  useEffect(() => {
+    if (searchParams.get('fromBriefings') === 'true') {
+      setShowCreateFromZero(true)
+      setBriefingSpec('')
+      setScratchTitle('')
+      setScratchPriority('media')
+    }
+  }, [searchParams])
 
   const createMutation = useMutation({
     mutationFn: async (data) => {
@@ -109,6 +132,149 @@ export default function Templates() {
     setShowForm(true)
   }
 
+  // Gerar briefing a partir do template
+  const handleGenerateBriefingFromTemplate = async (template) => {
+    if (!briefingSpec.trim()) {
+      toast.error('Por favor, descreva o briefing que deseja gerar')
+      return
+    }
+
+    setIsGenerating(true)
+    toast.info('Gerando briefing com IA... Isso pode levar alguns segundos.')
+
+    try {
+      const apiKey = import.meta.env.VITE_OPENAI_API_KEY
+      const result = apiKey 
+        ? await generateBriefingWithAI({
+            titulo: template.nome,
+            tema: template.tema,
+            prioridade: 'media',
+            especificacoes: briefingSpec
+          })
+        : await generateBriefingMock({
+            titulo: template.nome,
+            tema: template.tema,
+            prioridade: 'media',
+            especificacoes: briefingSpec
+          })
+
+      if (result.success) {
+        // Salvar novo briefing no banco de dados
+        const db = getDatabase()
+        const newId = `BRI${String(db.briefings.length + 1).padStart(3, '0')}`
+        const newBriefing = {
+          id: newId,
+          titulo: template.nome,
+          conteudo: result.conteudo,
+          tema: template.tema,
+          status: 'em_revisao',
+          prioridade: 'media',
+          responsavel_id: user?.userId,
+          responsavel_nome: user?.nome,
+          editado_por: null,
+          historico_edicoes: [],
+          fontes: result.fontes || [],
+          data_criacao: new Date().toISOString(),
+          data_atualizacao: new Date().toISOString(),
+          visualizacoes: 0,
+          template_origem: template.id
+        }
+
+        db.briefings.push(newBriefing)
+        saveDatabase(db)
+
+        toast.success('Briefing gerado com sucesso!')
+        queryClient.invalidateQueries(['briefings'])
+        
+        // Resetar formulário e fechar modal
+        setShowBriefingGenerator(null)
+        setBriefingSpec('')
+        
+        // Navegar para o novo briefing
+        setTimeout(() => {
+          navigate(`/briefings/${newBriefing.id}`)
+        }, 500)
+      } else {
+        toast.error(result.error || 'Erro ao gerar briefing')
+      }
+    } catch (error) {
+      toast.error('Erro ao gerar briefing: ' + error.message)
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
+  // Gerar briefing do zero (sem template)
+  const handleGenerateFromScratch = async () => {
+    if (!briefingSpec.trim()) {
+      toast.error('Por favor, descreva o briefing que deseja gerar')
+      return
+    }
+
+    setIsGenerating(true)
+    toast.info('Gerando briefing com IA... Isso pode levar alguns segundos.')
+
+    try {
+      const deteccao = detectTheme(briefingSpec)
+      const apiKey = import.meta.env.VITE_OPENAI_API_KEY
+      const result = apiKey
+        ? await generateBriefingWithAI({
+            titulo: scratchTitle || 'Briefing Executivo',
+            tema: deteccao.tema,
+            prioridade: scratchPriority,
+            especificacoes: briefingSpec
+          })
+        : await generateBriefingMock({
+            titulo: scratchTitle || 'Briefing Executivo',
+            tema: deteccao.tema,
+            prioridade: scratchPriority,
+            especificacoes: briefingSpec
+          })
+
+      if (result.success) {
+        const db = getDatabase()
+        const newId = `BRI${String(db.briefings.length + 1).padStart(3, '0')}`
+        const newBriefing = {
+          id: newId,
+          titulo: scratchTitle || (result.titulo || 'Briefing Executivo'),
+          conteudo: result.conteudo,
+          tema: deteccao.tema,
+          status: 'em_revisao',
+          prioridade: scratchPriority,
+          responsavel_id: user?.userId,
+          responsavel_nome: user?.nome,
+          editado_por: null,
+          historico_edicoes: [],
+          fontes: result.fontes || [],
+          data_criacao: new Date().toISOString(),
+          data_atualizacao: new Date().toISOString(),
+          visualizacoes: 0,
+          template_origem: null
+        }
+
+        db.briefings.push(newBriefing)
+        saveDatabase(db)
+
+        toast.success('Briefing gerado com sucesso!')
+        queryClient.invalidateQueries(['briefings'])
+
+        setShowCreateFromZero(false)
+        setBriefingSpec('')
+        setScratchTitle('')
+
+        setTimeout(() => {
+          navigate(`/briefings/${newBriefing.id}`)
+        }, 500)
+      } else {
+        toast.error(result.error || 'Erro ao gerar briefing')
+      }
+    } catch (error) {
+      toast.error('Erro ao gerar briefing: ' + error.message)
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -116,29 +282,38 @@ export default function Templates() {
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Templates</h1>
           <p className="mt-2 text-gray-600">
-            Gerencie templates de briefings
+            Gerencie templates e gere briefings automáticos com IA
           </p>
         </div>
-        <button
-          onClick={() => {
-            setEditing(null)
-            setFormData({
-              nome: '',
-              descricao: '',
-              conteudo: '',
-              tema: 'defesa_civil',
-              ativo: true
-            })
-            setShowForm(true)
-          }}
-          className="flex items-center gap-2 px-4 py-2 bg-fontea-primary text-white rounded-lg hover:bg-fontea-secondary transition"
-        >
-          <Plus className="h-5 w-5" />
-          Novo Template
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowCreateFromZero(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-fontea-secondary text-white rounded-lg hover:bg-fontea-primary transition"
+          >
+            <Sparkles className="h-5 w-5" />
+            Gerar do Zero
+          </button>
+          <button
+            onClick={() => {
+              setEditing(null)
+              setFormData({
+                nome: '',
+                descricao: '',
+                conteudo: '',
+                tema: 'defesa_civil',
+                ativo: true
+              })
+              setShowForm(true)
+            }}
+            className="flex items-center gap-2 px-4 py-2 bg-fontea-primary text-white rounded-lg hover:bg-fontea-secondary transition"
+          >
+            <Plus className="h-5 w-5" />
+            Novo Template
+          </button>
+        </div>
       </div>
 
-      {/* Formulário */}
+      {/* Formulário de Template */}
       {showForm && (
         <div className="bg-white rounded-lg shadow p-6">
           <h2 className="text-xl font-semibold text-gray-900 mb-4">
@@ -231,6 +406,149 @@ export default function Templates() {
         </div>
       )}
 
+      {/* Modal: Gerar do Zero (sem template) */}
+      {showCreateFromZero && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-lg max-w-lg w-full">
+            <div className="p-6">
+              <h2 className="text-xl font-semibold text-gray-900 mb-4">Gerar Briefing - Do Zero</h2>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Título (opcional)</label>
+                  <input
+                    type="text"
+                    value={scratchTitle}
+                    onChange={(e) => setScratchTitle(e.target.value)}
+                    placeholder="Ex: Análise de risco - Defesa Civil"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-fontea-primary focus:border-transparent"
+                    disabled={isGenerating}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Prioridade</label>
+                  <select
+                    value={scratchPriority}
+                    onChange={(e) => setScratchPriority(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-fontea-primary focus:border-transparent"
+                    disabled={isGenerating}
+                  >
+                    <option value="baixa">🟢 Baixa - Monitoramento contínuo</option>
+                    <option value="media">🟡 Média - Atenção necessária em breve</option>
+                    <option value="alta">🔴 Alta - Ação imediata necessária</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Especificações do Briefing *</label>
+                  <textarea
+                    value={briefingSpec}
+                    onChange={(e) => setBriefingSpec(e.target.value)}
+                    placeholder="Descreva o que você deseja que o briefing contenha..."
+                    rows={6}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-fontea-primary focus:border-transparent"
+                    disabled={isGenerating}
+                  />
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={handleGenerateFromScratch}
+                    disabled={isGenerating || !briefingSpec.trim()}
+                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-fontea-primary text-white rounded-lg hover:bg-fontea-secondary transition disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isGenerating ? (
+                      <>
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                        Gerando...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-5 w-5" />
+                        Gerar com IA
+                      </>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowCreateFromZero(false)
+                      setBriefingSpec('')
+                    }}
+                    disabled={isGenerating}
+                    className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition disabled:opacity-50"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Geração de Briefing */}
+      {showBriefingGenerator && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-lg max-w-md w-full">
+            <div className="p-6">
+              <h2 className="text-xl font-semibold text-gray-900 mb-4">
+                Gerar Briefing do Template
+              </h2>
+              <p className="text-sm text-gray-600 mb-4">
+                <strong>{templates?.find(t => t.id === showBriefingGenerator)?.nome}</strong>
+              </p>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Especificações do Briefing *
+                  </label>
+                  <textarea
+                    value={briefingSpec}
+                    onChange={(e) => setBriefingSpec(e.target.value)}
+                    placeholder="Descreva o que você deseja que o briefing contenha..."
+                    rows={6}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-fontea-primary focus:border-transparent"
+                    disabled={isGenerating}
+                  />
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => handleGenerateBriefingFromTemplate(templates?.find(t => t.id === showBriefingGenerator))}
+                    disabled={isGenerating || !briefingSpec.trim()}
+                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-fontea-primary text-white rounded-lg hover:bg-fontea-secondary transition disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isGenerating ? (
+                      <>
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                        Gerando...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-5 w-5" />
+                        Gerar com IA
+                      </>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowBriefingGenerator(null)
+                      setBriefingSpec('')
+                    }}
+                    disabled={isGenerating}
+                    className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition disabled:opacity-50"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Lista de Templates */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {templates?.map((template) => (
@@ -253,9 +571,19 @@ export default function Templates() {
               </div>
             </div>
             <div className="text-sm text-gray-600 mb-4">
-              <span className="font-medium">Tema:</span> {template.tema.replace('_', ' ').toUpperCase()}
+              <span className="font-medium">Tema:</span> {template.tema.replace(/_/g, ' ').toUpperCase()}
             </div>
             <div className="flex gap-2 pt-4 border-t border-gray-200">
+              <button
+                onClick={() => {
+                  setShowBriefingGenerator(template.id)
+                  setBriefingSpec('')
+                }}
+                className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm text-white bg-fontea-primary rounded-lg hover:bg-fontea-secondary transition"
+              >
+                <Sparkles className="h-4 w-4" />
+                Gerar
+              </button>
               <button
                 onClick={() => startEdit(template)}
                 className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm text-blue-700 bg-blue-100 rounded-lg hover:bg-blue-200 transition"

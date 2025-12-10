@@ -5,8 +5,8 @@ import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
 import Briefings from './pages/Briefings'
 import BriefingDetail from './pages/BriefingDetail'
+import ErrorBoundary from './components/ErrorBoundary'
 import NewBriefing from './pages/NewBriefing'
-import Templates from './pages/Templates'
 import Analytics from './pages/Analytics'
 import Profile from './pages/Profile'
 import Users from './pages/Users'
@@ -36,17 +36,17 @@ function App() {
             </ProtectedRoute>
           }
         >
-          <Route index element={<Dashboard />} />
-          <Route path="briefings" element={<Briefings />} />
-          <Route path="briefings/:id" element={<BriefingDetail />} />
-          <Route path="briefings/new" element={<NewBriefing />} />
-          <Route path="templates" element={<Templates />} />
-          <Route path="analytics" element={<Analytics />} />
-          <Route path="profile" element={<Profile />} />
-          <Route path="users" element={<Users />} />
-          <Route path="users/register" element={<RegisterUser />} />
-          <Route path="users/:userId/edit" element={<EditUser />} />
-          <Route path="users/:userId/view" element={<ViewUser />} />
+          <Route index element={<ErrorBoundary><Dashboard /></ErrorBoundary>} />
+          <Route path="briefings" element={<ErrorBoundary><Briefings /></ErrorBoundary>} />
+          <Route path="briefings/:id" element={<ErrorBoundary><BriefingDetail /></ErrorBoundary>} />
+          <Route path="briefings/new" element={<ErrorBoundary><NewBriefing /></ErrorBoundary>} />
+          
+          <Route path="analytics" element={<ErrorBoundary><Analytics /></ErrorBoundary>} />
+          <Route path="profile" element={<ErrorBoundary><Profile /></ErrorBoundary>} />
+          <Route path="users" element={<ErrorBoundary><Users /></ErrorBoundary>} />
+          <Route path="users/register" element={<ErrorBoundary><RegisterUser /></ErrorBoundary>} />
+          <Route path="users/:userId/edit" element={<ErrorBoundary><EditUser /></ErrorBoundary>} />
+          <Route path="users/:userId/view" element={<ErrorBoundary><ViewUser /></ErrorBoundary>} />
         </Route>
       </Routes>
     </BrowserRouter>

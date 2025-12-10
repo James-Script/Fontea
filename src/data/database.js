@@ -4,9 +4,9 @@
 // Função para obter credenciais do admin do .env
 const getAdminCredentials = () => {
   return {
-    id: import.meta.env.VITE_ADMIN_ID || 'FONADMIN',
+    id: import.meta.env.VITE_ADMIN_ID || 'ADMIN',
     email: import.meta.env.VITE_ADMIN_EMAIL || 'admin@fontea.com',
-    senha: import.meta.env.VITE_ADMIN_PASSWORD || 'admin123'
+    senha: import.meta.env.VITE_ADMIN_PASSWORD || 'nemtenta'
   };
 };
 
@@ -53,6 +53,9 @@ const initialBriefings = [
     data_criacao: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
     data_atualizacao: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
     visualizacoes: 45
+    ,
+    comentarios: [],
+    reacoes: {}
   },
   {
     id: 'BRI002',
@@ -69,6 +72,9 @@ const initialBriefings = [
     data_criacao: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
     data_atualizacao: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
     visualizacoes: 23
+    ,
+    comentarios: [],
+    reacoes: {}
   }
 ];
 
@@ -227,6 +233,52 @@ export const getUserStats = (userId) => {
       : 0
   };
 };
+
+// Comentários e reações: adicionar comentário
+export const addBriefingComment = (briefingId, comment) => {
+  try {
+    const db = getDatabase()
+    const idx = db.briefings.findIndex(b => b.id === briefingId)
+    if (idx === -1) return { success: false, error: 'Briefing não encontrado' }
+    if (!db.briefings[idx].comentarios) db.briefings[idx].comentarios = []
+    db.briefings[idx].comentarios.push({
+      id: `CMT${Date.now()}`,
+      usuario: comment.usuario,
+      texto: comment.texto,
+      data: new Date().toISOString()
+    })
+    db.briefings[idx].data_atualizacao = new Date().toISOString()
+    saveDatabase(db)
+    return { success: true }
+  } catch (error) {
+    console.error('Erro ao adicionar comentário:', error)
+    return { success: false, error: error.message }
+  }
+}
+
+// Alternar reação do usuário (type ex: 'like','clap','handshake','love','idea','laugh')
+export const toggleBriefingReaction = (briefingId, userId, reactionType) => {
+  try {
+    const db = getDatabase()
+    const idx = db.briefings.findIndex(b => b.id === briefingId)
+    if (idx === -1) return { success: false, error: 'Briefing não encontrado' }
+    if (!db.briefings[idx].reacoes) db.briefings[idx].reacoes = {}
+    if (!db.briefings[idx].reacoes[reactionType]) db.briefings[idx].reacoes[reactionType] = []
+    const arr = db.briefings[idx].reacoes[reactionType]
+    const existing = arr.indexOf(userId)
+    if (existing === -1) {
+      arr.push(userId)
+    } else {
+      arr.splice(existing, 1)
+    }
+    db.briefings[idx].reacoes[reactionType] = arr
+    saveDatabase(db)
+    return { success: true }
+  } catch (error) {
+    console.error('Erro ao alternar reação:', error)
+    return { success: false, error: error.message }
+  }
+}
 
 // Função para gerar ID único para novo usuário
 const generateUserId = (idEmpresa) => {
